@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "FastAPI: uvicorn (mock engine)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--reload", "--port", "8000"],
+      "env": { "LEANROUTE_ENGINE": "mock" },
+      "jinja": true,
+      "justMyCode": true
+    }
+  ]
+}
