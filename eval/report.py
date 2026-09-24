@@ -92,19 +92,6 @@ def main():
         "|---|---|---|",
         *[f"| {e}{' (default)' if e == 1.2 else ''} | {pct(rate(cheap(r, e) for r in easy))} | {pct(rate(cheap(r, e) for r in hard))} |"
           for e in (1.0, 1.1, 1.2, 1.3, 1.4)],
-    ]
-    rl_path = DATA / "scores_routellm.json"
-    if rl_path.exists():
-        rl = json.loads(rl_path.read_text())
-        rcheap = lambda r: rl[r["id"]] < 0.48 and r["sensitive"] < SENSITIVE_MAX
-        lines += [
-            "", f"`ROUTER=routellm` (RouteLLM's learned router, threshold 0.48 chosen on the dev half): AUC "
-            f"**{auc([rl[r['id']] for r in hard], [rl[r['id']] for r in easy]):.2f}**; "
-            f"easy questions sent to the cheap model **{pct(rate(rcheap(r) for r in easy))}**, "
-            f"hard questions sent to the cheap model **{pct(rate(rcheap(r) for r in hard))}**. "
-            "See the licensing note in `server/app/router_model.py`.",
-        ]
-    lines += [
         "", "Easy = short trivia questions (Natural Questions). Hard = Level 5 competition math and coding tasks "
         "(MATH, HumanEval). These are proxies: they test whether routing separates clearly easy from clearly hard "
         "requests, not whether a cheap model's answers were good enough.", "",

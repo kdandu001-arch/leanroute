@@ -75,8 +75,6 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
             gw = get_gateway()  # also validates the gateway settings (e.g. GUARD_MODE) at startup
             if gw.cfg.guard_mode in ("precise", "broad"):
                 gw.guard.score("warm up")
-            if gw.cfg.router == "routellm":
-                gw.router.strong_win("warm up")
         yield
 
     app = FastAPI(title="Leanroute API", version="0.1.0", lifespan=lifespan,

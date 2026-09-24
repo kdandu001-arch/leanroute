@@ -25,8 +25,6 @@ How well Laya's difficulty score separates easy from hard requests: AUC **0.67**
 | 1.3 | 47.5% | 20.7% |
 | 1.4 | 58.8% | 38.5% |
 
-`ROUTER=routellm` (RouteLLM's learned router, threshold 0.48 chosen on the dev half): AUC **0.99**; easy questions sent to the cheap model **87.5%**, hard questions sent to the cheap model **0.7%**. See the licensing note in `server/app/router_model.py`.
-
 Easy = short trivia questions (Natural Questions). Hard = Level 5 competition math and coding tasks (MATH, HumanEval). These are proxies: they test whether routing separates clearly easy from clearly hard requests, not whether a cheap model's answers were good enough.
 
 Average Laya decision time: 164 ms per request (two passes, CPU).
