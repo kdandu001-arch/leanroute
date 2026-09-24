@@ -95,6 +95,11 @@ def main():
         "", "Easy = short trivia questions (Natural Questions). Hard = Level 5 competition math and coding tasks "
         "(MATH, HumanEval). These are proxies: they test whether routing separates clearly easy from clearly hard "
         "requests, not whether a cheap model's answers were good enough.", "",
+        "**Caution:** the hard examples are mostly math notation and code, so a router can score well here from "
+        "surface features alone. RouteLLM's learned router scored AUC 0.99 on this test, yet could not tell "
+        "plain-language easy and hard questions apart in a hand-written check (e.g. \"Derive the backpropagation "
+        "equations\" scored as easier than \"What year did World War II end?\"). A better routing test needs "
+        "labels for whether a cheap model's answer was actually good enough.", "",
         f"Average Laya decision time: {sum(r['ms'] for r in rows) / len(rows):.0f} ms per request (two passes, CPU).",
     ]
     if not has_pa:
