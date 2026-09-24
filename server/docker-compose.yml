@@ -2,8 +2,15 @@ services:
   leanroute:
     build: .
     env_file: .env
+    environment:
+      LEANROUTE_DB: /data/leanroute.db   # usage log for the savings dashboard (survives restarts)
+      WEB_DIR: /web                      # website + dashboard pages
     ports: ["8000:8000"]
-    volumes: ["models:/models"]
+    volumes:
+      - models:/models
+      - data:/data
+      - ../web:/web:ro
     restart: unless-stopped
 volumes:
   models:
+  data:

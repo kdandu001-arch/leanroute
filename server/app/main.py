@@ -15,8 +15,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .engine import build_engine
-from .gateway import Gateway
+from .gateway import Gateway, GatewayConfig
 from .templates import TEMPLATES
+from .usage import UsageStore
 
 MAX_CHARS = int(os.getenv("MAX_INPUT_CHARS", "4000"))
 MAX_QUESTIONS = int(os.getenv("MAX_QUESTIONS", "12"))
@@ -29,8 +30,19 @@ class DecideRequest(BaseModel):
     questions: Optional[Dict[str, Dict[str, Any]]] = Field(None, description="Custom typed questions")
 
 
-def _api_keys() -> set:
-    return {k.strip() for k in os.getenv("LEANROUTE_API_KEYS", "").split(",") if k.strip()}
+def _api_keys() -> Dict[str, str]:
+    """Map each API key to its project. Entries are `project:key` or a bare `key` (project "default")."""
+    keys: Dict[str, str] = {}
+    for entry in os.getenv("LEANROUTE_API_KEYS", "").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        project, sep, key = entry.partition(":")
+        if sep and project.strip() and key.strip():
+            keys[key.strip()] = project.strip()
+        else:
+            keys[entry] = "default"
+    return keys
 
 
 class RateLimiter:
@@ -50,7 +62,7 @@ class RateLimiter:
         q.append(now)
 
 
-def create_app(engine=None, gateway: Optional[Gateway] = None) -> FastAPI:
+def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[UsageStore] = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app):
         if os.getenv("PRELOAD", "true").lower() == "true":
@@ -62,7 +74,8 @@ def create_app(engine=None, gateway: Optional[Gateway] = None) -> FastAPI:
     origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")]
     app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
 
-    state: Dict[str, Any] = {"engine": engine, "gateway": gateway}
+    state: Dict[str, Any] = {"engine": engine, "gateway": gateway,
+                             "store": store or (gateway.store if gateway else None)}
     limiter = RateLimiter(int(os.getenv("PLAYGROUND_RPM", "20")))
     public_playground = os.getenv("PUBLIC_PLAYGROUND", "true").lower() == "true"
 
@@ -71,26 +84,34 @@ def create_app(engine=None, gateway: Optional[Gateway] = None) -> FastAPI:
             state["engine"] = build_engine()
         return state["engine"]
 
+    def get_store() -> UsageStore:
+        if state["store"] is None:
+            state["store"] = UsageStore()
+        return state["store"]
+
     def get_gateway() -> Gateway:
         if state["gateway"] is None:
-            state["gateway"] = Gateway(get_engine())
+            state["gateway"] = Gateway(get_engine(), store=get_store())
         return state["gateway"]
 
-    def auth(request: Request, authorization: Optional[str] = Header(None), allow_public: bool = False):
+    def auth(request: Request, authorization: Optional[str] = Header(None), allow_public: bool = False) -> Optional[str]:
+        """Returns the caller's project, or None when the server has no keys configured (open mode)."""
         keys = _api_keys()
         token = (authorization or "").removeprefix("Bearer ").strip()
-        if not keys or token in keys:
-            return
+        if not keys:
+            return None
+        if token in keys:
+            return keys[token]
         if allow_public and public_playground and not token:
             limiter.check(request.client.host if request.client else "anon")
-            return
+            return None
         raise HTTPException(401, "Missing or invalid API key")
 
-    def auth_public(request: Request, authorization: Optional[str] = Header(None)):
-        auth(request, authorization, allow_public=True)
+    def auth_public(request: Request, authorization: Optional[str] = Header(None)) -> Optional[str]:
+        return auth(request, authorization, allow_public=True)
 
-    def auth_private(request: Request, authorization: Optional[str] = Header(None)):
-        auth(request, authorization, allow_public=False)
+    def auth_private(request: Request, authorization: Optional[str] = Header(None)) -> Optional[str]:
+        return auth(request, authorization, allow_public=False)
 
     @app.get("/health")
     def health():
@@ -126,29 +147,60 @@ def create_app(engine=None, gateway: Optional[Gateway] = None) -> FastAPI:
             raise HTTPException(413, f"Input longer than {MAX_CHARS} characters")
         return get_engine().predict(st, questions)
 
-    @app.post("/v1/chat/completions", dependencies=[Depends(auth_private)])
-    def chat(body: Dict[str, Any]):
+    @app.post("/v1/chat/completions")
+    def chat(body: Dict[str, Any], project: Optional[str] = Depends(auth_private)):
         if body.get("stream"):
             raise HTTPException(400, "Streaming is not supported yet; send stream=false")
         try:
-            return get_gateway().handle(body)
+            return get_gateway().handle(body, project=project or "default")
         except httpx.HTTPStatusError as e:
             raise HTTPException(e.response.status_code, f"Upstream LLM error: {e.response.text[:300]}")
         except httpx.HTTPError as e:
             raise HTTPException(502, f"Upstream LLM unreachable: {e}")
 
-    @app.get("/v1/stats", dependencies=[Depends(auth_private)])
-    def stats():
-        return get_gateway().stats.snapshot()
+    @app.get("/v1/stats")
+    def stats(project: Optional[str] = Depends(auth_private)):
+        """All-time totals. With API keys configured, each key sees only its own project."""
+        return get_store().snapshot(project=project)
 
-    # Serve the website from the same server: http://localhost:8000/
-    web_index = Path(os.getenv("WEB_DIR", Path(__file__).resolve().parents[2] / "web")) / "index.html"
+    @app.get("/v1/usage")
+    def usage(days: int = 30, project: Optional[str] = Depends(auth_private)):
+        """Everything the savings dashboard shows, for the last `days` days."""
+        days = max(1, min(days, 365))
+        since = time.time() - days * 86400
+        st = get_store()
+        totals = st.snapshot(project=project, since=since)
+        basis = min(days, 7)
+        recent = st.snapshot(project=project, since=time.time() - basis * 86400)
+        cfg = state["gateway"].cfg if state["gateway"] else GatewayConfig()
+        return {
+            "project": project or "all",
+            "days": days,
+            "totals": totals,
+            "daily": st.daily(project=project, since=since),
+            "projected_monthly_saved_usd": round(recent["saved_usd"] / basis * 30, 2),
+            "projection_basis_days": basis,
+            "pricing": {"cheap_model": cfg.cheap_model, "strong_model": cfg.strong_model,
+                        "cheap_usd_per_1m": [cfg.cheap_in, cfg.cheap_out],
+                        "strong_usd_per_1m": [cfg.strong_in, cfg.strong_out]},
+        }
+
+    # Serve the website and dashboard from the same server: http://localhost:8000/
+    web_dir = Path(os.getenv("WEB_DIR", Path(__file__).resolve().parents[2] / "web"))
+
+    def page(name: str):
+        f = web_dir / name
+        if f.exists():
+            return FileResponse(f)
+        return {"ok": True, "docs": "/docs", "note": f"web/{name} not found"}
 
     @app.get("/", include_in_schema=False)
     def home():
-        if web_index.exists():
-            return FileResponse(web_index)
-        return {"ok": True, "docs": "/docs", "note": "web/index.html not found"}
+        return page("index.html")
+
+    @app.get("/dashboard", include_in_schema=False)
+    def dashboard():
+        return page("dashboard.html")
 
     return app
 

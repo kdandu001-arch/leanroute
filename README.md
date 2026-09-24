@@ -95,6 +95,14 @@ Drop-in OpenAI-compatible endpoint. Send `model: "auto"` and Leanroute:
 
 The response includes a `leanroute` block (`route`, `reason`, `cost_usd`, `saved_usd`). `GET /v1/stats` shows totals and % saved versus sending everything to the strong model. Pin a specific model name to skip routing and keep only the guardrail. Streaming isn't supported yet.
 
+### Savings dashboard (Leanroute Ledger)
+
+Open **http://localhost:8000/dashboard** to see what the gateway saved you: money saved, % saved, what it would have cost on the strong model, monthly pace, routing split, attacks blocked, and a per-day chart.
+
+* Usage is saved to a small SQLite file (`server/data/leanroute.db`, or `LEANROUTE_DB`), so numbers survive restarts. **Only counts and costs are stored, never prompt text.**
+* Give each customer their own dashboard with project-named keys: `LEANROUTE_API_KEYS=acme:lr_abc,beta:lr_def`. Each key sees only its own project.
+* The same data is available as JSON: `GET /v1/usage?days=30` (and all-time totals at `GET /v1/stats`).
+
 Works with any OpenAI-compatible upstream (OpenAI, OpenRouter, Groq, Together, a local Ollama at `http://localhost:11434/v1`). **Set the price variables in `.env` to your provider's current prices**; savings are only as accurate as those numbers.
 
 ## Deploy for $0
@@ -131,7 +139,8 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 - [ ] Streaming in the gateway
 - [ ] Response cache for repeated prompts
 - [ ] Fine-tune Studio: upload CSV → custom calibrated model
-- [ ] Savings dashboard page
+- [x] Savings dashboard page
+- [ ] Dashboard for SDK users (SDK reports usage to a server)
 - [ ] LangChain / CrewAI / MCP plug-ins
 
 ## License

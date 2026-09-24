@@ -11,12 +11,13 @@ guardrail questions and the router questions, then:
 from __future__ import annotations
 
 import os
-import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+from .usage import UsageStore
 
 
 def _f(name: str, default: float) -> float:
@@ -53,49 +54,6 @@ GATE_QUESTIONS: Dict[str, Any] = {
 }
 
 
-class Stats:
-    def __init__(self):
-        self._lock = threading.Lock()
-        self.reset()
-
-    def reset(self):
-        self.requests = 0
-        self.blocked = 0
-        self.cheap = 0
-        self.strong = 0
-        self.actual_cost = 0.0
-        self.baseline_cost = 0.0
-        self.decision_ms_total = 0.0
-
-    def record(self, route: str, actual: float, baseline: float, decision_ms: float):
-        with self._lock:
-            self.requests += 1
-            self.decision_ms_total += decision_ms
-            self.actual_cost += actual
-            self.baseline_cost += baseline
-            if route == "blocked":
-                self.blocked += 1
-            elif route == "cheap":
-                self.cheap += 1
-            else:
-                self.strong += 1
-
-    def snapshot(self) -> Dict[str, Any]:
-        with self._lock:
-            saved = self.baseline_cost - self.actual_cost
-            return {
-                "requests": self.requests,
-                "blocked": self.blocked,
-                "routed_cheap": self.cheap,
-                "routed_strong": self.strong,
-                "actual_cost_usd": round(self.actual_cost, 6),
-                "all_strong_cost_usd": round(self.baseline_cost, 6),
-                "saved_usd": round(saved, 6),
-                "saved_pct": round(100 * saved / self.baseline_cost, 1) if self.baseline_cost else 0.0,
-                "avg_decision_ms": round(self.decision_ms_total / self.requests, 1) if self.requests else 0.0,
-            }
-
-
 def last_user_text(messages: List[Dict[str, Any]]) -> str:
     for m in reversed(messages or []):
         if m.get("role") == "user":
@@ -130,13 +88,14 @@ def estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
 
 
 class Gateway:
-    def __init__(self, engine, cfg: Optional[GatewayConfig] = None, client: Optional[httpx.Client] = None):
+    def __init__(self, engine, cfg: Optional[GatewayConfig] = None, client: Optional[httpx.Client] = None,
+                 store: Optional[UsageStore] = None):
         self.engine = engine
         self.cfg = cfg or GatewayConfig()
-        self.stats = Stats()
+        self.store = store or UsageStore(":memory:")
         self.client = client or httpx.Client(timeout=self.cfg.timeout_s)
 
-    def handle(self, body: Dict[str, Any]) -> Dict[str, Any]:
+    def handle(self, body: Dict[str, Any], project: str = "default") -> Dict[str, Any]:
         messages = body.get("messages") or []
         text = last_user_text(messages)[:4000]
         t0 = time.perf_counter()
@@ -149,8 +108,10 @@ class Gateway:
                 "engine": res.get("engine", "laya")}
 
         if d["route"] == "blocked":
-            baseline = cost(self.cfg, "strong", {"prompt_tokens": estimate_prompt_tokens(messages)})
-            self.stats.record("blocked", 0.0, baseline, decision_ms)
+            est = estimate_prompt_tokens(messages)
+            baseline = cost(self.cfg, "strong", {"prompt_tokens": est})
+            self.store.record(project=project, route="blocked", model=None, cost_usd=0.0, baseline_usd=baseline,
+                              decision_ms=decision_ms, prompt_tokens=est)
             return {
                 "id": f"leanroute-blocked-{int(time.time()*1000)}",
                 "object": "chat.completion",
@@ -182,7 +143,9 @@ class Gateway:
         usage = out.get("usage") or {}
         actual = cost(self.cfg, tier, usage)
         baseline = cost(self.cfg, "strong", usage)
-        self.stats.record(tier, actual, baseline, decision_ms)
+        self.store.record(project=project, route=meta["route"], model=model, cost_usd=actual, baseline_usd=baseline,
+                          decision_ms=decision_ms, prompt_tokens=usage.get("prompt_tokens", 0),
+                          completion_tokens=usage.get("completion_tokens", 0))
         meta.update({"model": model, "cost_usd": round(actual, 6), "saved_usd": round(baseline - actual, 6)})
         out["leanroute"] = meta
         return out

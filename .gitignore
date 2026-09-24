@@ -8,3 +8,4 @@ graphify-out/
 *.egg-info/
 dist/
 build/
+server/data/

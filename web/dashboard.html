@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Leanroute Ledger</title>
+<meta name="description" content="How much Leanroute saved on your LLM bill.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  color-scheme:dark;
+  --ground:#060609;--surface:#0f1017;--line:rgba(255,255,255,.07);--line-2:rgba(255,255,255,.12);
+  --ink:#ededf2;--ink-2:#a3a7b7;--ink-3:#8a8ea0;
+  --grid:#23252f;--axis:#383a46;
+  --blocked:#d95926;--cheap:#199e70;--strong:#9085e9;--pinned:#c98500;
+  --good:#0ca30c;--violet:#7c5cff;
+  --sans:"Geist",-apple-system,"Segoe UI",system-ui,sans-serif;
+  --mono:"Geist Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font:15px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:1120px;margin:0 auto;padding:28px clamp(16px,4vw,40px) 60px}
+:focus-visible{outline:2px solid var(--strong);outline-offset:2px;border-radius:6px}
+header{display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:space-between;margin-bottom:28px}
+.logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:17px;text-decoration:none;letter-spacing:-.02em}
+.logo small{font-weight:500;color:var(--ink-2)}
+.mark{width:22px;height:22px;border-radius:7px;background:conic-gradient(from 210deg,#7c5cff,#3fe0f5,#ff7ac6,#7c5cff)}
+.seg{display:flex;gap:3px;padding:3px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--line)}
+.seg button{border:0;background:none;color:var(--ink-2);font:500 13px var(--sans);padding:6px 11px;border-radius:7px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:rgba(255,255,255,.09);color:#fff}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px}
+.hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,2fr);gap:16px;margin-bottom:16px}
+@media (max-width:860px){.hero{grid-template-columns:minmax(0,1fr)}}
+.lbl{font-size:13px;color:var(--ink-2)}
+.big{font-size:clamp(48px,7vw,64px);font-weight:600;letter-spacing:-.045em;line-height:1.05;margin:6px 0 8px}
+.sub{color:var(--ink-2);font-size:14px}
+.sub b{color:var(--good);font-weight:600}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line);border-radius:16px;overflow:hidden;border:1px solid var(--line)}
+@media (max-width:560px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tile{background:var(--surface);padding:16px 18px}
+.tile b{display:block;font-size:24px;font-weight:600;letter-spacing:-.03em;margin-top:2px}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+h2{font-size:16px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+.hint{font-size:13px;color:var(--ink-3);margin:0 0 16px}
+.stack{display:flex;gap:2px;height:28px;margin:6px 0 14px}
+.stack i{display:block;height:100%;min-width:3px;cursor:default}
+.stack i:first-child{border-radius:4px 0 0 4px}.stack i:last-child{border-radius:0 4px 4px 0}
+.stack i:only-child{border-radius:4px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13.5px;color:var(--ink-2)}
+.legend span{display:inline-flex;align-items:center;gap:8px}
+.legend i{width:10px;height:10px;border-radius:3px;background:var(--c)}
+.legend b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+svg text{font:12px var(--mono);fill:var(--ink-3)}
+.chart{position:relative}
+.chart svg{display:block;width:100%;height:260px}
+.tip{position:fixed;pointer-events:none;z-index:10;background:#1b1d27;border:1px solid var(--line-2);border-radius:10px;padding:9px 11px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.4);display:none;min-width:170px}
+.tip .t{font-weight:600;margin-bottom:4px}
+.tip div{display:flex;justify-content:space-between;gap:14px;color:var(--ink-2)}
+.tip div b{color:var(--ink);font-weight:500;font-variant-numeric:tabular-nums}
+details{margin-top:14px;font-size:13px;color:var(--ink-2)}
+summary{cursor:pointer}
+table{width:100%;border-collapse:collapse;margin-top:10px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--ink-3);font-weight:500}
+.note{font-size:12.5px;color:var(--ink-3);margin-top:18px}
+.keybox{max-width:460px;margin:60px auto;text-align:center}
+.keybox input{width:100%;margin:14px 0 10px;background:#08090d;border:1px solid var(--line-2);border-radius:10px;color:var(--ink);font:14px var(--mono);padding:11px 12px}
+.btn{border:0;cursor:pointer;background:linear-gradient(180deg,#9479ff,#6a48f5);color:#fff;border-radius:999px;padding:10px 18px;font:500 14px var(--sans)}
+.err{color:#fda4af;font-size:13px;min-height:1.4em}
+.empty{text-align:center;padding:40px 16px;color:var(--ink-2)}
+.empty code{font-family:var(--mono);background:#08090d;border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="logo" href="/"><span class="mark" aria-hidden="true"></span>Leanroute <small>Ledger</small></a>
+    <div style="display:flex;gap:10px;align-items:center">
+      <div class="seg" role="group" aria-label="Time range" id="range">
+        <button data-days="7">7 days</button><button data-days="30" aria-pressed="true">30 days</button><button data-days="90">90 days</button>
+      </div>
+      <button class="seg" id="signout" hidden style="color:var(--ink-2);font:500 13px var(--sans);padding:7px 11px;cursor:pointer">Change key</button>
+    </div>
+  </header>
+
+  <div class="keybox panel" id="keybox" hidden>
+    <h2>Enter your Leanroute API key</h2>
+    <p class="hint" style="margin:0">This server has API keys switched on. Your key shows only your project's numbers.</p>
+    <input id="key" type="password" autocomplete="off" placeholder="lr_..." aria-label="API key">
+    <div class="err" id="keyerr"></div>
+    <button class="btn" id="keygo">Show my savings</button>
+  </div>
+
+  <main id="main" hidden>
+    <section class="hero">
+      <div class="panel">
+        <div class="lbl" id="heroLbl">Saved in the last 30 days</div>
+        <div class="big" id="heroVal">$0</div>
+        <div class="sub" id="heroSub"></div>
+      </div>
+      <div class="tiles">
+        <div class="tile"><span class="lbl">Would have cost</span><b id="tBase"></b></div>
+        <div class="tile"><span class="lbl">Actually cost</span><b id="tAct"></b></div>
+        <div class="tile"><span class="lbl">Monthly pace</span><b id="tProj"></b></div>
+        <div class="tile"><span class="lbl">Requests</span><b id="tReq"></b></div>
+        <div class="tile"><span class="lbl">Attacks blocked</span><b id="tBlk"></b></div>
+        <div class="tile"><span class="lbl">Avg decision time</span><b id="tMs"></b></div>
+      </div>
+    </section>
+
+    <div class="grid2">
+      <section class="panel">
+        <h2>Where requests went</h2>
+        <p class="hint">Each request is blocked, sent to the cheap model, or sent to the strong model.</p>
+        <div class="stack" id="stack" role="img"></div>
+        <div class="legend" id="legend"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Money saved per day</h2>
+        <p class="hint">Estimated savings compared with sending every request to the strong model.</p>
+        <div class="chart" id="chart"></div>
+        <details><summary>Show as table</summary><div id="table"></div></details>
+      </section>
+    </div>
+
+    <div class="empty panel" id="empty" hidden>
+      <h2>No traffic yet</h2>
+      <p>Point your app at this server and send a request with <code>model="auto"</code> to <code>/v1/chat/completions</code>.<br>Savings will show up here.</p>
+    </div>
+
+    <p class="note" id="note"></p>
+  </main>
+</div>
+<div class="tip" id="tip" role="status"></div>
+
+<script>
+(function(){
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const ROUTES = [
+  {id:"blocked", label:"Blocked", c:"var(--blocked)"},
+  {id:"routed_cheap", label:"Cheap model", c:"var(--cheap)"},
+  {id:"routed_strong", label:"Strong model", c:"var(--strong)"},
+  {id:"pinned", label:"Pinned by caller", c:"var(--pinned)"},
+];
+let days = 30, key = "";
+try{ key = localStorage.getItem("leanroute_key") || ""; }catch(e){}
+
+function usd(v){
+  const a = Math.abs(v);
+  if(a >= 1e6) return "$" + (v/1e6).toFixed(1) + "M";
+  if(a >= 1e4) return "$" + (v/1e3).toFixed(1) + "K";
+  if(a >= 1) return "$" + v.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(a === 0) return "$0";
+  if(a >= 0.01) return "$" + v.toFixed(2);
+  return "$" + v.toPrecision(2);
+}
+const num = n => n >= 1e4 ? (n/1e3).toFixed(1)+"K" : n.toLocaleString();
+
+const tip = $("#tip");
+function showTip(e, html){ tip.innerHTML = html; tip.style.display = "block";
+  const r = tip.getBoundingClientRect(); let x = e.clientX + 14, y = e.clientY + 14;
+  if(x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if(y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+  tip.style.left = x + "px"; tip.style.top = y + "px"; }
+function hideTip(){ tip.style.display = "none"; }
+
+async function load(){
+  const headers = key ? {Authorization: "Bearer " + key} : {};
+  let r;
+  try{ r = await fetch(`/v1/usage?days=${days}`, {headers}); }
+  catch(e){ return fail("Can't reach the Leanroute server. Open this page from your server, e.g. http://localhost:8000/dashboard"); }
+  if(r.status === 401){ $("#main").hidden = true; $("#keybox").hidden = false; $("#signout").hidden = true;
+    $("#keyerr").textContent = key ? "That key wasn't accepted." : ""; return; }
+  if(!r.ok) return fail(`The server returned an error (${r.status}).`);
+  $("#keybox").hidden = true; $("#main").hidden = false; $("#signout").hidden = !key;
+  render(await r.json());
+}
+function fail(msg){ $("#main").hidden = false; $("#keybox").hidden = true;
+  $("#empty").hidden = false; $("#empty").innerHTML = `<h2>Something went wrong</h2><p>${esc(msg)}</p>`; }
+
+function render(d){
+  const t = d.totals;
+  $("#heroLbl").textContent = `Saved in the last ${d.days} days` + (d.project !== "all" && d.project !== "default" ? ` · ${d.project}` : "");
+  $("#heroVal").textContent = usd(t.saved_usd);
+  $("#heroSub").innerHTML = t.all_strong_cost_usd ? `<b>${t.saved_pct}% less</b> than sending every request to ${esc(d.pricing.strong_model)}` : "";
+  $("#tBase").textContent = usd(t.all_strong_cost_usd);
+  $("#tAct").textContent = usd(t.actual_cost_usd);
+  $("#tProj").textContent = usd(d.projected_monthly_saved_usd);
+  $("#tReq").textContent = num(t.requests);
+  $("#tBlk").textContent = num(t.blocked);
+  $("#tMs").textContent = t.requests ? `${Math.round(t.avg_decision_ms)} ms` : "–";
+  const has = t.requests > 0;
+  $("#empty").hidden = has;
+  document.querySelectorAll(".grid2 .panel").forEach(p => p.hidden = !has);
+  const p = d.pricing;
+  $("#note").textContent = `Monthly pace = savings from the last ${d.projection_basis_days} days, scaled to 30 days. Savings are estimates: each request is priced on the model it used, and compared with the same tokens on ${p.strong_model} ($${p.strong_usd_per_1m[0]} in / $${p.strong_usd_per_1m[1]} out per 1M tokens) and ${p.cheap_model} ($${p.cheap_usd_per_1m[0]} / $${p.cheap_usd_per_1m[1]}). Prices come from the server's settings; keep them current. Days are in UTC. Prompt text is never stored.`;
+  if(!has) return;
+  renderSplit(t);
+  renderDaily(d);
+}
+
+function renderSplit(t){
+  const parts = ROUTES.map(r => ({...r, n: t[r.id] || 0})).filter(r => r.n > 0);
+  const total = parts.reduce((s,r) => s + r.n, 0);
+  const pct = n => Math.round(100 * n / total);
+  $("#stack").setAttribute("aria-label", parts.map(r => `${r.label} ${pct(r.n)}%`).join(", "));
+  $("#stack").innerHTML = parts.map((r,i) => `<i data-i="${i}" style="flex:${r.n};background:${r.c}"></i>`).join("");
+  $("#stack").querySelectorAll("i").forEach(el => {
+    const r = parts[+el.dataset.i];
+    el.onmousemove = e => showTip(e, `<div class="t">${r.label}</div><div>Requests <b>${num(r.n)}</b></div><div>Share <b>${pct(r.n)}%</b></div>`);
+    el.onmouseleave = hideTip;
+  });
+  $("#legend").innerHTML = ROUTES.filter(r => r.id !== "pinned" || t.pinned).map(r =>
+    `<span style="--c:${r.c}"><i></i>${r.label} <b>${t[r.id] ? pct(t[r.id]) : 0}%</b></span>`).join("");
+}
+
+function niceMax(v){ if(v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); const f = v / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; }
+
+function renderDaily(d){
+  const byDate = Object.fromEntries(d.daily.map(x => [x.date, x]));
+  const rows = [];
+  const today = new Date(); today.setUTCHours(0,0,0,0);
+  for(let i = d.days - 1; i >= 0; i--){
+    const dt = new Date(today - i * 86400000).toISOString().slice(0,10);
+    rows.push(byDate[dt] || {date:dt, requests:0, blocked:0, actual_cost_usd:0, all_strong_cost_usd:0, saved_usd:0});
+  }
+  const W = $("#chart").clientWidth || 800, H = 260, L = 56, R = 8, T = 12, B = 28;
+  const iw = W - L - R, ih = H - T - B;
+  const max = niceMax(Math.max(...rows.map(r => r.saved_usd)));
+  const y = v => T + ih - (Math.max(0, v) / max) * ih;
+  const band = iw / rows.length, bw = Math.max(2, Math.min(24, band - 2));
+  const ticks = [0, max/4, max/2, max*3/4, max];
+  const fmtDay = s => new Date(s + "T00:00:00Z").toLocaleDateString(undefined, {month:"short", day:"numeric", timeZone:"UTC"});
+  const every = Math.ceil(rows.length / Math.max(2, Math.floor(iw / 70)));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Money saved per day, last ${d.days} days">`;
+  ticks.forEach(v => { svg += `<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? "var(--axis)" : "var(--grid)"}" stroke-width="1"/>
+    <text x="${L-8}" y="${y(v)+4}" text-anchor="end">${usd(v)}</text>`; });
+  rows.forEach((r,i) => {
+    const cx = L + band * i + band / 2, h = T + ih - y(r.saved_usd);
+    if(h > 0){ const x = cx - bw/2, top = y(r.saved_usd), rr = Math.min(4, bw/2, h);
+      svg += `<path d="M${x},${T+ih} V${top+rr} Q${x},${top} ${x+rr},${top} H${x+bw-rr} Q${x+bw},${top} ${x+bw},${top+rr} V${T+ih} Z" fill="var(--cheap)"/>`; }
+    svg += `<rect class="hit" data-i="${i}" x="${L + band*i}" y="${T}" width="${band}" height="${ih}" fill="transparent"/>`;
+    const last = i === rows.length - 1;
+    if(last) svg += `<text x="${W-R}" y="${H-8}" text-anchor="end">${fmtDay(r.date)}</text>`;
+    else if(i % every === 0 && (rows.length - 1 - i) * band > 70) svg += `<text x="${cx}" y="${H-8}" text-anchor="middle">${fmtDay(r.date)}</text>`;
+  });
+  $("#chart").innerHTML = svg + "</svg>";
+  $("#chart").querySelectorAll(".hit").forEach(el => {
+    const r = rows[+el.dataset.i];
+    el.onmousemove = e => showTip(e, `<div class="t">${fmtDay(r.date)}</div><div>Saved <b>${usd(r.saved_usd)}</b></div><div>Actually cost <b>${usd(r.actual_cost_usd)}</b></div><div>Would have cost <b>${usd(r.all_strong_cost_usd)}</b></div><div>Requests <b>${num(r.requests)}</b></div>`);
+    el.onmouseleave = hideTip;
+  });
+  $("#table").innerHTML = `<table><thead><tr><th>Day</th><th>Requests</th><th>Blocked</th><th>Actually cost</th><th>Would have cost</th><th>Saved</th></tr></thead><tbody>` +
+    rows.filter(r => r.requests).reverse().map(r => `<tr><td>${fmtDay(r.date)}</td><td>${num(r.requests)}</td><td>${num(r.blocked)}</td><td>${usd(r.actual_cost_usd)}</td><td>${usd(r.all_strong_cost_usd)}</td><td>${usd(r.saved_usd)}</td></tr>`).join("") + `</tbody></table>`;
+}
+
+$("#range").querySelectorAll("button").forEach(b => b.onclick = () => {
+  days = +b.dataset.days;
+  $("#range").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  load();
+});
+$("#keygo").onclick = () => { key = $("#key").value.trim(); try{ localStorage.setItem("leanroute_key", key); }catch(e){} load(); };
+$("#key").onkeydown = e => { if(e.key === "Enter") $("#keygo").click(); };
+$("#signout").onclick = () => { key = ""; try{ localStorage.removeItem("leanroute_key"); }catch(e){} $("#key").value = ""; load(); };
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(load, 200); });
+load();
+})();
+</script>
+</body>
+</html>
