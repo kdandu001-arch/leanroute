@@ -88,7 +88,7 @@ Templates: `scam_check`, `ticket_routing`, `email_triage`, `lead_score`, `guardr
 
 Drop-in OpenAI-compatible endpoint. Send `model: "auto"` and Leanroute:
 
-1. runs a Laya guard pass and blocks jailbreak / injection attempts (no LLM call, no cost),
+1. runs a Laya guard pass and blocks attacks (no LLM call, no cost). By default a request is blocked only when both the jailbreak and the injection score reach `GUARD_BLOCK_THRESHOLD` (0.92); `GUARD_MODE=either` catches more attacks but blocks far more normal requests (see [`eval/results.md`](eval/results.md)),
 2. runs a Laya router pass (difficulty + sensitivity) on everything that wasn't blocked,
 3. sends easy, non-sensitive requests to `CHEAP_MODEL`,
 4. sends everything else to `STRONG_MODEL`.
@@ -130,7 +130,7 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 * Laya **decides**; it doesn't write. Summaries, answers and chat stay with the LLM.
 * Short text only: roughly a page per call (`MAX_INPUT_CHARS`, default 4,000).
 * Keep choice questions to a handful of options.
-* **Measured accuracy is not production-ready yet.** On 873 held-out labelled prompts from public datasets ([`eval/results.md`](eval/results.md)), the default settings block 72% of attacks but also **wrongly block about 10% of normal requests**, mostly code and math (Laya's jailbreak signal fires on them). Easy vs. hard routing is weak (AUC 0.71). Threshold tuning alone can't fix this; fine-tuning on labelled data is the next step. Watch the blocked count on your dashboard, and re-run the evaluation yourself with `python eval/build_dataset.py && python eval/score.py && python eval/report.py`.
+* **Measured accuracy is not production-ready yet.** On 873 held-out labelled prompts from public datasets ([`eval/results.md`](eval/results.md)), the default guard (both signals ≥ 0.92) blocks about 58% of attacks and wrongly blocks about 2.6% of normal requests. Blocking on either signal catches 72% of attacks but wrongly blocks about 10% of normal requests, mostly code and math, because Laya's jailbreak signal fires on them. Easy vs. hard routing is weak (AUC 0.71). Threshold tuning alone can't fix this; fine-tuning on labelled data is the next step. Watch the blocked count on your dashboard, and re-run the evaluation yourself with `python eval/build_dataset.py && python eval/score.py && python eval/report.py`.
 * Base checkpoints are weak zero-shot on niche domains and ship over-confident. For production, **fine-tune on your own labelled examples and fit a temperature** (see the Laya model card). Start with conservative thresholds and keep a human in the loop for high-stakes actions.
 
 ## Roadmap

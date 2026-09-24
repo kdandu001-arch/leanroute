@@ -60,7 +60,8 @@ class Decision:
 
 @dataclass
 class Policy:
-    block_threshold: float = 0.85   # block when P(jailbreak or injection) >= this
+    block_threshold: float = 0.92   # block when the guard score (see guard_mode) >= this
+    guard_mode: str = "both"        # "both": jailbreak AND injection must reach it (far fewer false blocks); "either": catch more attacks
     easy_max: float = 1.2           # difficulty (0-3) at or below -> cheap model
     min_confidence: float = 0.0     # optional: require this confidence before trusting "easy". Off by default: Laya's difficulty confidence is low for every prompt, so it doesn't separate easy from hard
     sensitive_max: float = 0.5      # money/legal/medical/safety -> strong model
@@ -164,7 +165,7 @@ class Leanroute:
         try:
             g = _to_answers(self.engine.predict({"prompt": text}, GUARD_QUESTIONS))
             jb, inj = float(g["g_jailbreak"].value), float(g["g_injection"].value)
-            if max(jb, inj) >= p.block_threshold:
+            if (max(jb, inj) if p.guard_mode == "either" else min(jb, inj)) >= p.block_threshold:
                 ms = (time.perf_counter() - t0) * 1000
                 d = Decision("blocked", None, f"jailbreak={jb:.2f} injection={inj:.2f}",
                              {"jailbreak": jb, "injection": inj}, ms)

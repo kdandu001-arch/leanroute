@@ -38,7 +38,11 @@ class GatewayConfig:
     cheap_out: float = field(default_factory=lambda: _f("CHEAP_PRICE_OUT", 0.60))
     strong_in: float = field(default_factory=lambda: _f("STRONG_PRICE_IN", 2.50))
     strong_out: float = field(default_factory=lambda: _f("STRONG_PRICE_OUT", 10.0))
-    block_threshold: float = field(default_factory=lambda: _f("GUARD_BLOCK_THRESHOLD", 0.85))
+    # "both": block only when jailbreak AND injection scores reach the threshold. Measured in eval/results.md:
+    # far fewer normal requests blocked (Laya's jailbreak score alone misfires on code and math).
+    # "either": block when either score does; catches more attacks but blocks ~10% of normal traffic.
+    guard_mode: str = field(default_factory=lambda: os.getenv("GUARD_MODE", "both").strip().lower())
+    block_threshold: float = field(default_factory=lambda: _f("GUARD_BLOCK_THRESHOLD", 0.92))
     easy_max_difficulty: float = field(default_factory=lambda: _f("ROUTER_EASY_MAX", 1.2))
     # Off by default: Laya's difficulty confidence is low for every prompt, so it doesn't separate easy from hard.
     min_confidence: float = field(default_factory=lambda: _f("ROUTER_MIN_CONFIDENCE", 0.0))
@@ -74,7 +78,8 @@ def last_user_text(messages: List[Dict[str, Any]]) -> str:
 def is_attack(guard: Dict[str, Any], cfg: GatewayConfig) -> Optional[Dict[str, Any]]:
     jb = guard["g_jailbreak"]["noul"]
     inj = guard["g_injection"]["noul"]
-    if max(jb, inj) >= cfg.block_threshold:
+    score = max(jb, inj) if cfg.guard_mode == "either" else min(jb, inj)
+    if score >= cfg.block_threshold:
         return {"route": "blocked", "reason": f"guardrail: jailbreak={jb:.2f} injection={inj:.2f}"}
     return None
 
