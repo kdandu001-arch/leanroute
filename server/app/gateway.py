@@ -1,11 +1,11 @@
 """LLM Cost Cutter: an OpenAI-compatible gateway.
 
-For every chat request it runs ONE Laya forward pass that answers both the
-guardrail questions and the router questions, then:
+For every chat request it:
 
-  * blocks jailbreak / prompt-injection attempts before any LLM is paid,
-  * sends easy requests to a cheap model,
-  * sends hard or sensitive requests to the strong model,
+  * answers identical repeat requests from the response cache (if enabled) for $0,
+  * blocks prompt-injection / jailbreak attempts before any LLM is paid (see GUARD_MODE),
+  * asks Laya how hard and how sensitive the request is,
+  * sends easy requests to a cheap model and hard or sensitive ones to the strong model,
   * records what that cost versus sending everything to the strong model.
 """
 from __future__ import annotations
@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from .cache import ResponseCache, request_key
+from .guard import ProtectAIGuard
 from .usage import UsageStore
 
 
@@ -38,15 +40,24 @@ class GatewayConfig:
     cheap_out: float = field(default_factory=lambda: _f("CHEAP_PRICE_OUT", 0.60))
     strong_in: float = field(default_factory=lambda: _f("STRONG_PRICE_IN", 2.50))
     strong_out: float = field(default_factory=lambda: _f("STRONG_PRICE_OUT", 10.0))
-    # "both": block only when jailbreak AND injection scores reach the threshold. Measured in eval/results.md:
-    # far fewer normal requests blocked (Laya's jailbreak score alone misfires on code and math).
-    # "either": block when either score does; catches more attacks but blocks ~10% of normal traffic.
-    guard_mode: str = field(default_factory=lambda: os.getenv("GUARD_MODE", "both").strip().lower())
-    block_threshold: float = field(default_factory=lambda: _f("GUARD_BLOCK_THRESHOLD", 0.92))
+    # Guard modes, measured in eval/results.md:
+    #   precise (default) ProtectAI injection detector only: fewest normal requests blocked, no code blocked
+    #   broad             ProtectAI, plus Laya when both its jailbreak and injection scores are very high:
+    #                     catches more role-play jailbreaks, but blocks some coding requests
+    #   laya              Laya's jailbreak and injection scores only (both must reach the threshold)
+    #   off               no guard
+    guard_mode: str = field(default_factory=lambda: os.getenv("GUARD_MODE", "precise").strip().lower())
+    protectai_threshold: float = field(default_factory=lambda: _f("PROTECTAI_THRESHOLD", 0.66))
+    # Laya's part of the guard. Blank = 0.99 in broad mode, 0.92 in laya mode.
+    laya_threshold: Optional[float] = field(default_factory=lambda: _f("LAYA_GUARD_THRESHOLD", 0) or None)
     easy_max_difficulty: float = field(default_factory=lambda: _f("ROUTER_EASY_MAX", 1.2))
     # Off by default: Laya's difficulty confidence is low for every prompt, so it doesn't separate easy from hard.
     min_confidence: float = field(default_factory=lambda: _f("ROUTER_MIN_CONFIDENCE", 0.0))
     timeout_s: float = field(default_factory=lambda: _f("UPSTREAM_TIMEOUT", 120))
+
+    def __post_init__(self):
+        if self.guard_mode not in ("precise", "broad", "laya", "off"):
+            raise ValueError(f"GUARD_MODE must be precise, broad, laya or off (got {self.guard_mode!r})")
 
 
 # Asked in two separate Laya passes, as Laya's own presets are meant to be used. Mixing them in one
@@ -75,19 +86,7 @@ def last_user_text(messages: List[Dict[str, Any]]) -> str:
     return ""
 
 
-def is_attack(guard: Dict[str, Any], cfg: GatewayConfig) -> Optional[Dict[str, Any]]:
-    jb = guard["g_jailbreak"]["noul"]
-    inj = guard["g_injection"]["noul"]
-    score = max(jb, inj) if cfg.guard_mode == "either" else min(jb, inj)
-    if score >= cfg.block_threshold:
-        return {"route": "blocked", "reason": f"guardrail: jailbreak={jb:.2f} injection={inj:.2f}"}
-    return None
-
-
 def decide_route(answers: Dict[str, Any], cfg: GatewayConfig) -> Dict[str, Any]:
-    blocked = is_attack(answers, cfg)
-    if blocked:
-        return blocked
     diff = answers["r_difficulty"]
     sens = answers["r_sensitive"]["noul"]
     if diff["score"] <= cfg.easy_max_difficulty and diff["confidence"] >= cfg.min_confidence and sens < 0.5:
@@ -107,26 +106,58 @@ def estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
 
 class Gateway:
     def __init__(self, engine, cfg: Optional[GatewayConfig] = None, client: Optional[httpx.Client] = None,
-                 store: Optional[UsageStore] = None):
+                 store: Optional[UsageStore] = None, cache: Optional[ResponseCache] = None, guard=None):
         self.engine = engine
         self.cfg = cfg or GatewayConfig()
         self.store = store or UsageStore(":memory:")
+        self.cache = cache or ResponseCache(ttl_seconds=0, path=":memory:")
+        self.guard = guard or ProtectAIGuard()  # loads its model on first use
         self.client = client or httpx.Client(timeout=self.cfg.timeout_s)
 
+    def check_guard(self, text: str) -> Optional[str]:
+        """Returns the reason a request is blocked, or None if it may pass."""
+        mode = self.cfg.guard_mode
+        if mode in ("precise", "broad"):
+            p = self.guard.score(text)
+            if p >= self.cfg.protectai_threshold:
+                return f"injection detector={p:.2f}"
+        if mode in ("broad", "laya"):
+            g = self.engine.predict({"prompt": text}, GUARD_QUESTIONS)["answers"]
+            jb, inj = g["g_jailbreak"]["noul"], g["g_injection"]["noul"]
+            limit = self.cfg.laya_threshold or (0.99 if mode == "broad" else 0.92)
+            if min(jb, inj) >= limit:
+                return f"laya: jailbreak={jb:.2f} injection={inj:.2f}"
+        return None
+
     def handle(self, body: Dict[str, Any], project: str = "default") -> Dict[str, Any]:
+        key = request_key(project, body)
+        hit = self.cache.get(key)
+        if hit:
+            out, baseline = hit
+            self.store.record(project=project, route="cached", model=out.get("model"), cost_usd=0.0,
+                              baseline_usd=baseline, decision_ms=0.0)
+            out["leanroute"] = {"route": "cached", "reason": "identical request answered from cache",
+                                "decision_ms": 0.0, "engine": "cache", "model": out.get("model"),
+                                "cost_usd": 0.0, "saved_usd": round(baseline, 6)}
+            return out
+
         messages = body.get("messages") or []
         text = last_user_text(messages)[:4000]
+        requested = body.get("model", "auto")
         t0 = time.perf_counter()
-        res = self.engine.predict({"prompt": text}, GUARD_QUESTIONS)
-        d = is_attack(res["answers"], self.cfg)
-        if d is None:
+        why_blocked = self.check_guard(text)
+        engine = getattr(self.engine, "name", "laya")
+        if why_blocked:
+            d = {"route": "blocked", "reason": f"guardrail: {why_blocked}"}
+        elif requested in ("auto", "", None):
             router = self.engine.predict({"request": text}, ROUTER_QUESTIONS)
-            d = decide_route({**res["answers"], **router["answers"]}, self.cfg)
+            engine = router.get("engine", engine)
+            d = decide_route(router["answers"], self.cfg)
+        else:
+            d = {"route": "pinned", "reason": "caller chose the model"}
         decision_ms = (time.perf_counter() - t0) * 1000
 
-        requested = body.get("model", "auto")
-        meta = {"route": d["route"], "reason": d["reason"], "decision_ms": round(decision_ms, 1),
-                "engine": res.get("engine", "laya")}
+        meta = {"route": d["route"], "reason": d["reason"], "decision_ms": round(decision_ms, 1), "engine": engine}
 
         if d["route"] == "blocked":
             est = estimate_prompt_tokens(messages)
@@ -167,6 +198,7 @@ class Gateway:
         self.store.record(project=project, route=meta["route"], model=model, cost_usd=actual, baseline_usd=baseline,
                           decision_ms=decision_ms, prompt_tokens=usage.get("prompt_tokens", 0),
                           completion_tokens=usage.get("completion_tokens", 0))
+        self.cache.put(key, out, baseline)
         meta.update({"model": model, "cost_usd": round(actual, 6), "saved_usd": round(baseline - actual, 6)})
         out["leanroute"] = meta
         return out

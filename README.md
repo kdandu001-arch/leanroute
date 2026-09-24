@@ -88,12 +88,16 @@ Templates: `scam_check`, `ticket_routing`, `email_triage`, `lead_score`, `guardr
 
 Drop-in OpenAI-compatible endpoint. Send `model: "auto"` and Leanroute:
 
-1. runs a Laya guard pass and blocks attacks (no LLM call, no cost). By default a request is blocked only when both the jailbreak and the injection score reach `GUARD_BLOCK_THRESHOLD` (0.92); `GUARD_MODE=either` catches more attacks but blocks far more normal requests (see [`eval/results.md`](eval/results.md)),
-2. runs a Laya router pass (difficulty + sensitivity) on everything that wasn't blocked,
+1. blocks prompt-injection attempts before any LLM is paid (no cost). The default guard (`GUARD_MODE=precise`) uses ProtectAI's open-source injection detector, which in testing almost never blocked a normal request; `broad` also uses Laya to catch more role-play jailbreaks, at the price of blocking some coding requests (see [`eval/results.md`](eval/results.md)),
+2. asks Laya how hard and how sensitive the request is,
 3. sends easy, non-sensitive requests to `CHEAP_MODEL`,
 4. sends everything else to `STRONG_MODEL`.
 
 The response includes a `leanroute` block (`route`, `reason`, `cost_usd`, `saved_usd`). `GET /v1/stats` shows totals and % saved versus sending everything to the strong model. Pin a specific model name to skip routing and keep only the guardrail. Streaming isn't supported yet.
+
+### Response cache
+
+Set `CACHE_TTL_SECONDS` (e.g. `3600`) and identical requests (same project, same messages and settings) are answered from storage for $0, skipping both Laya and the LLM. Off by default, since some apps want a fresh answer every time. **While it's on, LLM responses are stored**; prompts are stored only as a one-way hash. Blocked requests are never cached.
 
 ### Savings dashboard (Leanroute Ledger)
 
@@ -130,7 +134,7 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 * Laya **decides**; it doesn't write. Summaries, answers and chat stay with the LLM.
 * Short text only: roughly a page per call (`MAX_INPUT_CHARS`, default 4,000).
 * Keep choice questions to a handful of options.
-* **Measured accuracy is not production-ready yet.** On 873 held-out labelled prompts from public datasets ([`eval/results.md`](eval/results.md)), the default guard (both signals ≥ 0.92) blocks about 58% of attacks and wrongly blocks about 2.6% of normal requests. Blocking on either signal catches 72% of attacks but wrongly blocks about 10% of normal requests, mostly code and math, because Laya's jailbreak signal fires on them. Easy vs. hard routing is weak (AUC 0.71). Threshold tuning alone can't fix this; fine-tuning on labelled data is the next step. Watch the blocked count on your dashboard, and re-run the evaluation yourself with `python eval/build_dataset.py && python eval/score.py && python eval/report.py`.
+* **Measured accuracy, honestly.** On held-out labelled prompts from public datasets ([`eval/results.md`](eval/results.md)): the default guard wrongly blocks **0.4%** of normal requests and **no coding or math requests**, but catches only about **36%** of subtle injection attacks (many in German; the detector is English-only). The guard is a first line of defence, not a complete one. Easy-vs-hard routing is weak (AUC 0.67), so treat savings as a rough estimate for now. Re-run the evaluation yourself: `python eval/build_dataset.py && python eval/score.py && python eval/score_protectai.py && python eval/report.py`.
 * Base checkpoints are weak zero-shot on niche domains and ship over-confident. For production, **fine-tune on your own labelled examples and fit a temperature** (see the Laya model card). Start with conservative thresholds and keep a human in the loop for high-stakes actions.
 
 ## Roadmap

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from .engine import build_engine
 from .gateway import Gateway, GatewayConfig
 from .templates import TEMPLATES
+from .cache import ResponseCache
 from .usage import UsageStore
 
 MAX_CHARS = int(os.getenv("MAX_INPUT_CHARS", "4000"))
@@ -67,6 +68,9 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
     async def lifespan(_app):
         if os.getenv("PRELOAD", "true").lower() == "true":
             get_engine()
+            gw = get_gateway()  # also validates the gateway settings (e.g. GUARD_MODE) at startup
+            if gw.cfg.guard_mode in ("precise", "broad"):
+                gw.guard.score("warm up")
         yield
 
     app = FastAPI(title="Leanroute API", version="0.1.0", lifespan=lifespan,
@@ -91,7 +95,7 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
 
     def get_gateway() -> Gateway:
         if state["gateway"] is None:
-            state["gateway"] = Gateway(get_engine(), store=get_store())
+            state["gateway"] = Gateway(get_engine(), store=get_store(), cache=ResponseCache())
         return state["gateway"]
 
     def auth(request: Request, authorization: Optional[str] = Header(None), allow_public: bool = False) -> Optional[str]:

@@ -1,121 +1,107 @@
-"""Measure the gateway's decisions on the labelled set and tune its thresholds.
+"""Measure the gateway's guard modes and routing on the labelled set. Writes eval/results.md.
 
-Thresholds are chosen on the "dev" half only; every number in the final table comes from the
-untouched "test" half. Writes eval/results.md.
+All numbers come from the held-out "test" half. The guard thresholds used by the server
+(PROTECTAI_THRESHOLD=0.66, Laya 0.99 in broad mode, 0.92 in laya mode) were chosen on the "dev" half.
 
-  python eval/report.py [--max-false-block 0.02] [--max-hard-to-cheap 0.05]
+The ProtectAI detector was trained on jackhhao/jailbreak-classification, so the main columns
+exclude that source ("fair") and it is reported on its own.
 """
 from __future__ import annotations
 
-import argparse
 import json
 from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "eval" / "data"
-CURRENT = {"block": 0.85, "easy_max": 1.2}
 SENSITIVE_MAX = 0.5
 
 
 def load():
     prompts = {p["id"]: p for p in map(json.loads, (DATA / "prompts.jsonl").open())}
+    pa_path = DATA / "scores_protectai.jsonl"
+    pa = {s["id"]: s["protectai"] for s in map(json.loads, pa_path.open())} if pa_path.exists() else {}
     rows = []
     for s in map(json.loads, (DATA / "scores.jsonl").open()):
         p = prompts.get(s["id"])
         if p:  # the dataset's label and Laya's score are both called "difficulty"; keep the label apart
-            rows.append({**p, "label_difficulty": p["difficulty"], **s, "guard": max(s["jailbreak"], s["injection"])})
+            rows.append({**p, "label_difficulty": p["difficulty"], **s, "protectai": pa.get(s["id"]),
+                         "guard": max(s["jailbreak"], s["injection"])})
     return rows
 
 
 def rate(xs):
+    xs = list(xs)
     return sum(xs) / len(xs) if xs else 0.0
-
-
-def metrics(rows, block, easy_max):
-    attacks = [r for r in rows if r["attack"]]
-    normal = [r for r in rows if not r["attack"]]
-    blocked = lambda r: r["guard"] >= block
-    cheap = lambda r: not blocked(r) and r["difficulty"] <= easy_max and r["sensitive"] < SENSITIVE_MAX
-    return {
-        "attacks": len(attacks), "normal": len(normal),
-        "attack_blocked": rate([blocked(r) for r in attacks]),
-        "false_block": rate([blocked(r) for r in normal]),
-        "easy_to_cheap": rate([cheap(r) for r in normal if r["label_difficulty"] == "easy"]),
-        "hard_to_cheap": rate([cheap(r) for r in normal if r["label_difficulty"] == "hard"]),
-        "false_block_by_source": {src: rate([blocked(r) for r in normal if r["source"] == src])
-                                  for src in sorted({r["source"] for r in normal})},
-    }
-
-
-def tune(dev, max_fb, max_hard):
-    grid = [round(0.5 + i * 0.005, 3) for i in range(100)]
-    attacks = [r for r in dev if r["attack"]]
-    normal = [r for r in dev if not r["attack"]]
-    ok = [t for t in grid if rate([r["guard"] >= t for r in normal]) <= max_fb]
-    block = max(ok, key=lambda t: (rate([r["guard"] >= t for r in attacks]), t)) if ok else grid[-1]
-
-    easy = [r for r in normal if r["label_difficulty"] == "easy" and r["guard"] < block]
-    hard = [r for r in normal if r["label_difficulty"] == "hard" and r["guard"] < block]
-    cheap = lambda r, e: r["difficulty"] <= e and r["sensitive"] < SENSITIVE_MAX
-    egrid = [round(0.5 + i * 0.05, 2) for i in range(41)]
-    ok = [e for e in egrid if rate([cheap(r, e) for r in hard]) <= max_hard]
-    easy_max = max(ok, key=lambda e: (rate([cheap(r, e) for r in easy]), -e)) if ok else egrid[0]
-    return block, easy_max
 
 
 def pct(x):
     return f"{100 * x:.1f}%"
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--max-false-block", type=float, default=0.02)
-    ap.add_argument("--max-hard-to-cheap", type=float, default=0.05)
-    args = ap.parse_args()
+def auc(pos, neg):
+    ranked = sorted([(v, 1) for v in pos] + [(v, 0) for v in neg])
+    rank_sum = sum(i for i, (_, y) in enumerate(ranked, 1) if y)
+    return (rank_sum - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg))
 
+
+GUARDS = {
+    "precise (default): ProtectAI ≥ 0.66": lambda r: r["protectai"] >= 0.66,
+    "broad: ProtectAI ≥ 0.66, or Laya both ≥ 0.99": lambda r: r["protectai"] >= 0.66 or min(r["jailbreak"], r["injection"]) >= 0.99,
+    "laya: Laya both scores ≥ 0.92": lambda r: min(r["jailbreak"], r["injection"]) >= 0.92,
+    "old default: Laya either score ≥ 0.85": lambda r: r["guard"] >= 0.85,
+}
+
+
+def main():
     rows = load()
-    dev = [r for r in rows if r["split"] == "dev"]
     test = [r for r in rows if r["split"] == "test"]
-    block, easy_max = tune(dev, args.max_false_block, args.max_hard_to_cheap)
-    cur = metrics(test, CURRENT["block"], CURRENT["easy_max"])
-    new = metrics(test, block, easy_max)
-    avg_ms = sum(r["ms"] for r in rows) / len(rows)
+    fair = [r for r in test if not r["source"].startswith("jackhhao")]
+    has_pa = all(r["protectai"] is not None for r in rows)
+    guards = {k: v for k, v in GUARDS.items() if has_pa or "ProtectAI" not in k}
 
     lines = [
-        "# Leanroute evaluation",
-        "",
-        f"Run {date.today().isoformat()} with the real Laya model and the gateway's exact questions. "
-        f"{len(rows)} labelled prompts from public datasets (see `eval/build_dataset.py`), split in half: "
-        f"thresholds tuned on {len(dev)} **dev** prompts, all numbers below measured on the other "
-        f"{len(test)} **test** prompts ({new['attacks']} attacks, {new['normal']} normal requests).",
-        "",
-        f"Tuning goals: wrongly block at most {pct(args.max_false_block)} of normal requests; "
-        f"send at most {pct(args.max_hard_to_cheap)} of hard requests to the cheap model.",
-        "",
-        "| | Before (block ≥ 0.85, easy ≤ 1.2) | Tuned (block ≥ %.3f, easy ≤ %.2f) |" % (block, easy_max),
-        "|---|---|---|",
-        f"| Attacks blocked | {pct(cur['attack_blocked'])} | {pct(new['attack_blocked'])} |",
-        f"| Normal requests wrongly blocked | {pct(cur['false_block'])} | {pct(new['false_block'])} |",
-        f"| Easy questions sent to the cheap model | {pct(cur['easy_to_cheap'])} | {pct(new['easy_to_cheap'])} |",
-        f"| Hard questions sent to the cheap model | {pct(cur['hard_to_cheap'])} | {pct(new['hard_to_cheap'])} |",
-        "",
-        "Wrongly blocked, by kind of normal request (tuned threshold, test half):",
-        "",
-        "| Source | Wrongly blocked |",
-        "|---|---|",
-        *[f"| {s} | {pct(v)} |" for s, v in new["false_block_by_source"].items()],
-        "",
-        f"Average decision time: {avg_ms:.0f} ms per request (two Laya passes, CPU).",
-        "",
-        "Easy = short trivia questions (Natural Questions). Hard = Level 5 competition math and coding "
-        "tasks (MATH, HumanEval). These are proxies for routing, not a measure of whether a cheap "
-        "model's answers were good enough.",
+        "# Leanroute evaluation", "",
+        f"Run {date.today().isoformat()} with the real models and the gateway's exact logic. {len(rows)} labelled "
+        "prompts from public datasets (`eval/build_dataset.py`), split in half by a hash of the text. "
+        f"Thresholds were chosen on the dev half; **every number below is from the {len(test)}-prompt test half**.", "",
+        "## Guard: blocking attacks without blocking normal users", "",
+        f"\"Fair\" = sources the ProtectAI detector never trained on ({sum(r['attack'] for r in fair)} attacks, "
+        f"{sum(not r['attack'] for r in fair)} normal requests; many attacks are subtle injections, some in German). "
+        "jackhhao = long role-play jailbreaks; ProtectAI trained on this source, so its number there is flattering.", "",
+        "| Guard mode | Attacks blocked (fair) | Normal requests wrongly blocked (fair) | Coding requests wrongly blocked | Math wrongly blocked | jackhhao jailbreaks blocked |",
+        "|---|---|---|---|---|---|",
     ]
+    for name, f in guards.items():
+        lines.append(
+            f"| {name} | {pct(rate(f(r) for r in fair if r['attack']))} "
+            f"| {pct(rate(f(r) for r in fair if not r['attack']))} "
+            f"| {pct(rate(f(r) for r in test if r['source'] == 'humaneval'))} "
+            f"| {pct(rate(f(r) for r in test if r['source'] == 'math-level5'))} "
+            f"| {pct(rate(f(r) for r in test if r['source'] == 'jackhhao-jailbreak'))} |")
+
+    easy = [r for r in test if r["label_difficulty"] == "easy"]
+    hard = [r for r in test if r["label_difficulty"] == "hard"]
+    cheap = lambda r, e: r["difficulty"] <= e and r["sensitive"] < SENSITIVE_MAX
+    lines += [
+        "", "## Routing: easy vs. hard", "",
+        f"How well Laya's difficulty score separates easy from hard requests: AUC "
+        f"**{auc([r['difficulty'] for r in hard], [r['difficulty'] for r in easy]):.2f}** "
+        "(0.5 = coin flip, 1.0 = perfect).", "",
+        "| ROUTER_EASY_MAX | Easy questions sent to the cheap model | Hard questions sent to the cheap model |",
+        "|---|---|---|",
+        *[f"| {e}{' (default)' if e == 1.2 else ''} | {pct(rate(cheap(r, e) for r in easy))} | {pct(rate(cheap(r, e) for r in hard))} |"
+          for e in (1.0, 1.1, 1.2, 1.3, 1.4)],
+        "", "Easy = short trivia questions (Natural Questions). Hard = Level 5 competition math and coding tasks "
+        "(MATH, HumanEval). These are proxies: they test whether routing separates clearly easy from clearly hard "
+        "requests, not whether a cheap model's answers were good enough.", "",
+        f"Average Laya decision time: {sum(r['ms'] for r in rows) / len(rows):.0f} ms per request (two passes, CPU).",
+    ]
+    if not has_pa:
+        lines += ["", "ProtectAI rows skipped: run `python eval/score_protectai.py` first."]
     report = "\n".join(lines) + "\n"
     (ROOT / "eval" / "results.md").write_text(report)
     print(report)
-    print(f"Suggested settings: GUARD_BLOCK_THRESHOLD={block}  ROUTER_EASY_MAX={easy_max}")
 
 
 if __name__ == "__main__":

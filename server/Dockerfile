@@ -14,7 +14,8 @@ COPY app ./app
 
 # Download Laya weights at build time so containers start fast (set to 0 to skip)
 ARG PREFETCH_MODEL=1
-RUN if [ "$PREFETCH_MODEL" = "1" ]; then python -c "import laya; laya.Router(preload=True)"; fi
+RUN if [ "$PREFETCH_MODEL" = "1" ]; then python -c "import laya; laya.Router(preload=True)" && \
+    python -c "from app.guard import ProtectAIGuard; ProtectAIGuard().score('warm up')"; fi
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

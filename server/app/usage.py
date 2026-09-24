@@ -14,7 +14,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
     ts                REAL NOT NULL,
     project           TEXT NOT NULL,
-    route             TEXT NOT NULL,      -- blocked | cheap | strong | pinned
+    route             TEXT NOT NULL,      -- blocked | cheap | strong | pinned | cached
     model             TEXT,
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
@@ -58,10 +58,10 @@ class UsageStore:
         with self._lock:
             row = self._db.execute(
                 "SELECT COUNT(*), "
-                "SUM(route='blocked'), SUM(route='cheap'), SUM(route='strong'), SUM(route='pinned'), "
-                "COALESCE(SUM(cost_usd),0), COALESCE(SUM(baseline_usd),0), COALESCE(AVG(decision_ms),0) "
+                "SUM(route='blocked'), SUM(route='cheap'), SUM(route='strong'), SUM(route='pinned'), SUM(route='cached'), "
+                "COALESCE(SUM(cost_usd),0), COALESCE(SUM(baseline_usd),0), COALESCE(AVG(CASE WHEN route != 'cached' THEN decision_ms END),0) "
                 f"FROM events{where}", args).fetchone()
-        n, blocked, cheap, strong, pinned, actual, baseline, avg_ms = row
+        n, blocked, cheap, strong, pinned, cached, actual, baseline, avg_ms = row
         saved = baseline - actual
         return {
             "requests": n,
@@ -69,6 +69,7 @@ class UsageStore:
             "routed_cheap": cheap or 0,
             "routed_strong": strong or 0,
             "pinned": pinned or 0,
+            "cached": cached or 0,
             "actual_cost_usd": round(actual, 6),
             "all_strong_cost_usd": round(baseline, 6),
             "saved_usd": round(saved, 6),

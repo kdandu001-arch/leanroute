@@ -14,7 +14,7 @@
   --ground:#060609;--surface:#0f1017;--line:rgba(255,255,255,.07);--line-2:rgba(255,255,255,.12);
   --ink:#ededf2;--ink-2:#a3a7b7;--ink-3:#8a8ea0;
   --grid:#23252f;--axis:#383a46;
-  --blocked:#d95926;--cheap:#199e70;--strong:#9085e9;--pinned:#c98500;
+  --cached:#3987e5;--blocked:#d95926;--cheap:#199e70;--strong:#9085e9;--pinned:#c98500;
   --good:#0ca30c;--violet:#7c5cff;
   --sans:"Geist",-apple-system,"Segoe UI",system-ui,sans-serif;
   --mono:"Geist Mono",ui-monospace,Menlo,monospace;
@@ -116,7 +116,7 @@ th{color:var(--ink-3);font-weight:500}
     <div class="grid2">
       <section class="panel">
         <h2>Where requests went</h2>
-        <p class="hint">Each request is blocked, sent to the cheap model, or sent to the strong model.</p>
+        <p class="hint">Each request is blocked, sent to the cheap model, sent to the strong model, or answered from cache.</p>
         <div class="stack" id="stack" role="img"></div>
         <div class="legend" id="legend"></div>
       </section>
@@ -144,6 +144,7 @@ th{color:var(--ink-3);font-weight:500}
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const ROUTES = [
+  {id:"cached", label:"Answered from cache", c:"var(--cached)"},
   {id:"blocked", label:"Blocked", c:"var(--blocked)"},
   {id:"routed_cheap", label:"Cheap model", c:"var(--cheap)"},
   {id:"routed_strong", label:"Strong model", c:"var(--strong)"},
@@ -217,7 +218,7 @@ function renderSplit(t){
     el.onmousemove = e => showTip(e, `<div class="t">${r.label}</div><div>Requests <b>${num(r.n)}</b></div><div>Share <b>${pct(r.n)}%</b></div>`);
     el.onmouseleave = hideTip;
   });
-  $("#legend").innerHTML = ROUTES.filter(r => r.id !== "pinned" || t.pinned).map(r =>
+  $("#legend").innerHTML = ROUTES.filter(r => (r.id !== "pinned" && r.id !== "cached") || t[r.id]).map(r =>
     `<span style="--c:${r.c}"><i></i>${r.label} <b>${t[r.id] ? pct(t[r.id]) : 0}%</b></span>`).join("");
 }
 
