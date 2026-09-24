@@ -60,11 +60,22 @@ class Decision:
 
 @dataclass
 class Policy:
-    block_threshold: float = 0.92   # block when the guard score (see guard_mode) >= this
-    guard_mode: str = "both"        # "both": jailbreak AND injection must reach it (far fewer false blocks); "either": catch more attacks
+    # Guard modes (same as the server's GUARD_MODE; measured in eval/results.md):
+    #   precise  prompt-injection detector only: fewest normal requests blocked (default)
+    #   broad    detector, plus Laya when its jailbreak and injection scores are both very high
+    #   laya     Laya's jailbreak and injection scores only
+    #   off      no guard
+    # Engines without a detector (custom engines) fall back to "laya" for precise/broad.
+    guard_mode: str = "precise"
+    detector_threshold: float = 0.66  # block when P(injection) from the detector >= this
+    laya_threshold: Optional[float] = None  # Laya's part: None = 0.99 in broad mode, 0.92 in laya mode
     easy_max: float = 1.2           # difficulty (0-3) at or below -> cheap model
     min_confidence: float = 0.0     # optional: require this confidence before trusting "easy". Off by default: Laya's difficulty confidence is low for every prompt, so it doesn't separate easy from hard
     sensitive_max: float = 0.5      # money/legal/medical/safety -> strong model
+
+    def __post_init__(self):
+        if self.guard_mode not in ("precise", "broad", "laya", "off"):
+            raise ValueError(f"guard_mode must be precise, broad, laya or off (got {self.guard_mode!r})")
 
 
 class Stats:
@@ -162,13 +173,11 @@ class Leanroute:
         text = text_of(prompt)[: self.max_chars]
         t0 = time.perf_counter()
         p = self.policy
+        scores: Dict[str, Any] = {}
         try:
-            g = _to_answers(self.engine.predict({"prompt": text}, GUARD_QUESTIONS))
-            jb, inj = float(g["g_jailbreak"].value), float(g["g_injection"].value)
-            if (max(jb, inj) if p.guard_mode == "either" else min(jb, inj)) >= p.block_threshold:
-                ms = (time.perf_counter() - t0) * 1000
-                d = Decision("blocked", None, f"jailbreak={jb:.2f} injection={inj:.2f}",
-                             {"jailbreak": jb, "injection": inj}, ms)
+            why_blocked = self._guard(text, scores)
+            if why_blocked:
+                d = Decision("blocked", None, why_blocked, scores, (time.perf_counter() - t0) * 1000)
                 self.last = d
                 return d
             a = _to_answers(self.engine.predict({"request": text}, ROUTER_QUESTIONS))
@@ -180,8 +189,7 @@ class Leanroute:
             return d
         ms = (time.perf_counter() - t0) * 1000
         diff, sens = a["r_difficulty"], float(a["r_sensitive"].value)
-        scores = {"jailbreak": jb, "injection": inj, "difficulty": float(diff.value),
-                  "difficulty_confidence": diff.confidence, "sensitive": sens}
+        scores.update({"difficulty": float(diff.value), "difficulty_confidence": diff.confidence, "sensitive": sens})
         if float(diff.value) <= p.easy_max and diff.confidence >= p.min_confidence and sens < p.sensitive_max:
             d = Decision("cheap", cheap, f"easy (difficulty {float(diff.value):.2f}, conf {diff.confidence:.2f})", scores, ms)
         else:
@@ -189,6 +197,26 @@ class Leanroute:
             d = Decision("strong", strong, why, scores, ms)
         self.last = d
         return d
+
+    def _guard(self, text: str, scores: Dict[str, Any]) -> Optional[str]:
+        """Returns why `text` should be blocked, or None. Records the scores it used."""
+        p = self.policy
+        mode = p.guard_mode
+        detector = getattr(self.engine, "injection_score", None)
+        if mode in ("precise", "broad") and detector is None:
+            mode = "laya"
+        if mode in ("precise", "broad"):
+            s = float(detector(text))
+            scores["injection_detector"] = s
+            if s >= p.detector_threshold:
+                return f"injection detector={s:.2f}"
+        if mode in ("broad", "laya"):
+            g = _to_answers(self.engine.predict({"prompt": text}, GUARD_QUESTIONS))
+            jb, inj = float(g["g_jailbreak"].value), float(g["g_injection"].value)
+            scores.update({"jailbreak": jb, "injection": inj})
+            if min(jb, inj) >= (p.laya_threshold or (0.99 if mode == "broad" else 0.92)):
+                return f"jailbreak={jb:.2f} injection={inj:.2f}"
+        return None
 
     def guard(self, prompt: Union[str, Messages]) -> Decision:
         """Raise Blocked for jailbreak / injection attempts; otherwise return the decision."""

@@ -92,8 +92,19 @@ Use your provider's **current** prices; savings are only as accurate as those nu
 
 ```python
 from leanroute import Policy
-lr = Leanroute(policy=Policy(block_threshold=0.9, easy_max=1.0, min_confidence=0.0))
+lr = Leanroute(policy=Policy(guard_mode="precise", detector_threshold=0.66, easy_max=1.2))
 ```
+
+**Guard modes** (measured in [`eval/results.md`](../eval/results.md)):
+
+| `guard_mode` | What blocks a prompt |
+|---|---|
+| `precise` (default) | ProtectAI's open-source prompt-injection detector. Fewest normal requests blocked; never blocked code or math in testing |
+| `broad` | The detector, or Laya when its jailbreak and injection scores are both very high. Catches more role-play jailbreaks, blocks some coding requests |
+| `laya` | Laya's jailbreak and injection scores only |
+| `off` | Nothing |
+
+In local mode the detector runs inside your app (downloaded on first use); with `api_url` it runs on the server.
 
 **Fail-open by default:** if the decision layer errors (server down, model not loaded), requests go to your strong model so your app keeps working. Set `fail_open=False` to raise instead.
 

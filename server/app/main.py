@@ -31,6 +31,10 @@ class DecideRequest(BaseModel):
     questions: Optional[Dict[str, Dict[str, Any]]] = Field(None, description="Custom typed questions")
 
 
+class GuardRequest(BaseModel):
+    text: str = Field(..., description="Text to check for prompt injection")
+
+
 def _api_keys() -> Dict[str, str]:
     """Map each API key to its project. Entries are `project:key` or a bare `key` (project "default")."""
     keys: Dict[str, str] = {}
@@ -150,6 +154,16 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
         if len(str(st)) > MAX_CHARS:
             raise HTTPException(413, f"Input longer than {MAX_CHARS} characters")
         return get_engine().predict(st, questions)
+
+    @app.post("/v1/guard", dependencies=[Depends(auth_public)])
+    def guard(req: GuardRequest):
+        """Prompt-injection probability from the gateway's detector (used by the SDK's precise/broad guard)."""
+        if len(req.text) > MAX_CHARS:
+            raise HTTPException(413, f"Input longer than {MAX_CHARS} characters")
+        t0 = time.perf_counter()
+        score = get_gateway().guard.score(req.text)
+        return {"injection": round(score, 5), "detector": getattr(get_gateway().guard, "name", "protectai"),
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
     @app.post("/v1/chat/completions")
     def chat(body: Dict[str, Any], project: Optional[str] = Depends(auth_private)):
