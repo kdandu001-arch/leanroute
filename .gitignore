@@ -9,3 +9,4 @@ graphify-out/
 dist/
 build/
 server/data/
+eval/data/

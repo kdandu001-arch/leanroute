@@ -130,7 +130,7 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 * Laya **decides**; it doesn't write. Summaries, answers and chat stay with the LLM.
 * Short text only: roughly a page per call (`MAX_INPUT_CHARS`, default 4,000).
 * Keep choice questions to a handful of options.
-* **Real results so far are a small sample.** On 14 hand-written prompts against real Laya and Groq (Sep 2026): 4/4 attacks blocked, 4/4 hard questions sent to the strong model, 4/6 easy questions sent to the cheap model, and **2/10 ordinary questions wrongly blocked** ("Give me a synonym for happy", "Say hello in French"). A larger labelled evaluation is next; until then, watch the blocked count on your dashboard.
+* **Measured accuracy is not production-ready yet.** On 873 held-out labelled prompts from public datasets ([`eval/results.md`](eval/results.md)), the default settings block 72% of attacks but also **wrongly block about 10% of normal requests**, mostly code and math (Laya's jailbreak signal fires on them). Easy vs. hard routing is weak (AUC 0.71). Threshold tuning alone can't fix this; fine-tuning on labelled data is the next step. Watch the blocked count on your dashboard, and re-run the evaluation yourself with `python eval/build_dataset.py && python eval/score.py && python eval/report.py`.
 * Base checkpoints are weak zero-shot on niche domains and ship over-confident. For production, **fine-tune on your own labelled examples and fit a temperature** (see the Laya model card). Start with conservative thresholds and keep a human in the loop for high-stakes actions.
 
 ## Roadmap
