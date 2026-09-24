@@ -6,11 +6,16 @@ For every chat request it:
   * blocks prompt-injection / jailbreak attempts before any LLM is paid (see GUARD_MODE),
   * asks Laya how hard and how sensitive the request is,
   * sends easy requests to a cheap model and hard or sensitive ones to the strong model,
-  * records what that cost versus sending everything to the strong model.
+  * records what that cost versus sending everything to the strong model,
+  * optionally double-checks a sample of cheap answers against the strong model (QUALITY_CHECK_RATE).
 """
 from __future__ import annotations
 
+import logging
 import os
+import random
+import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -20,6 +25,8 @@ import httpx
 from .cache import ResponseCache, request_key
 from .guard import ProtectAIGuard
 from .usage import UsageStore
+
+log = logging.getLogger("leanroute")
 
 
 def _f(name: str, default: float) -> float:
@@ -54,6 +61,8 @@ class GatewayConfig:
     # Off by default: Laya's difficulty confidence is low for every prompt, so it doesn't separate easy from hard.
     min_confidence: float = field(default_factory=lambda: _f("ROUTER_MIN_CONFIDENCE", 0.0))
     timeout_s: float = field(default_factory=lambda: _f("UPSTREAM_TIMEOUT", 120))
+    # Share of cheap-routed requests to double-check against the strong model (0 = off, 0.05 = 5%).
+    quality_rate: float = field(default_factory=lambda: _f("QUALITY_CHECK_RATE", 0.0))
 
     def __post_init__(self):
         if self.guard_mode not in ("precise", "broad", "laya", "off"):
@@ -99,6 +108,37 @@ def cost(cfg: GatewayConfig, tier: str, usage: Dict[str, Any]) -> float:
     return (usage.get("prompt_tokens", 0) * pin + usage.get("completion_tokens", 0) * pout) / 1_000_000
 
 
+JUDGE_PROMPT = """You are grading an AI assistant's answer.
+
+Question:
+{question}
+
+Answer to grade:
+{answer}
+
+Reference answer from a stronger model:
+{reference}
+
+Is the answer to grade correct and about as helpful as the reference answer? Reply with only YES or NO."""
+
+
+def answer_text(response: Dict[str, Any]) -> str:
+    try:
+        return response["choices"][0]["message"].get("content") or ""
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def parse_verdict(text: str) -> Optional[bool]:
+    caps = re.findall(r"\b(YES|NO)\b", text)  # the verdict, written in capitals as instructed
+    if caps:
+        return caps[-1] == "YES"
+    words = re.findall(r"[a-z]+", text.lower())
+    if len(words) == 1 and words[0] in ("yes", "no"):  # a bare "yes" / "no"
+        return words[0] == "yes"
+    return None
+
+
 def estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
     chars = sum(len(str(m.get("content", ""))) for m in messages or [])
     return max(1, chars // 4)
@@ -113,6 +153,7 @@ class Gateway:
         self.cache = cache or ResponseCache(ttl_seconds=0, path=":memory:")
         self.guard = guard or ProtectAIGuard()  # loads its model on first use
         self.client = client or httpx.Client(timeout=self.cfg.timeout_s)
+        self._submit = lambda fn, *args: threading.Thread(target=fn, args=args, daemon=True).start()
 
     def check_guard(self, text: str) -> Optional[str]:
         """Returns the reason a request is blocked, or None if it may pass."""
@@ -183,6 +224,21 @@ class Gateway:
             model = requested
             meta["route"] = "pinned"
 
+        out = self._call(body, model)
+        usage = out.get("usage") or {}
+        actual = cost(self.cfg, tier, usage)
+        baseline = cost(self.cfg, "strong", usage)
+        self.store.record(project=project, route=meta["route"], model=model, cost_usd=actual, baseline_usd=baseline,
+                          decision_ms=decision_ms, prompt_tokens=usage.get("prompt_tokens", 0),
+                          completion_tokens=usage.get("completion_tokens", 0))
+        self.cache.put(key, out, baseline)
+        if meta["route"] == "cheap" and self.cfg.quality_rate > 0 and random.random() < self.cfg.quality_rate:
+            self._submit(self._quality_check, body, answer_text(out), project)
+        meta.update({"model": model, "cost_usd": round(actual, 6), "saved_usd": round(baseline - actual, 6)})
+        out["leanroute"] = meta
+        return out
+
+    def _call(self, body: Dict[str, Any], model: str) -> Dict[str, Any]:
         upstream_body = {k: v for k, v in body.items() if k != "stream"}
         upstream_body["model"] = model
         headers = {"Content-Type": "application/json"}
@@ -191,14 +247,21 @@ class Gateway:
         r = self.client.post(f"{self.cfg.upstream_base_url.rstrip('/')}/chat/completions",
                              json=upstream_body, headers=headers)
         r.raise_for_status()
-        out = r.json()
-        usage = out.get("usage") or {}
-        actual = cost(self.cfg, tier, usage)
-        baseline = cost(self.cfg, "strong", usage)
-        self.store.record(project=project, route=meta["route"], model=model, cost_usd=actual, baseline_usd=baseline,
-                          decision_ms=decision_ms, prompt_tokens=usage.get("prompt_tokens", 0),
-                          completion_tokens=usage.get("completion_tokens", 0))
-        self.cache.put(key, out, baseline)
-        meta.update({"model": model, "cost_usd": round(actual, 6), "saved_usd": round(baseline - actual, 6)})
-        out["leanroute"] = meta
-        return out
+        return r.json()
+
+    def _quality_check(self, body: Dict[str, Any], cheap_answer: str, project: str):
+        """Ask the strong model the same question, then have it judge whether the cheap answer was as good.
+        Runs after the user already has their answer; failures are logged and never affect requests."""
+        try:
+            strong = self._call(body, self.cfg.strong_model)
+            question = last_user_text(body.get("messages") or [])[:4000]
+            judge_prompt = JUDGE_PROMPT.format(question=question, answer=cheap_answer[:6000],
+                                               reference=answer_text(strong)[:6000])
+            verdict = self._call({"messages": [{"role": "user", "content": judge_prompt}], "max_tokens": 1024},
+                                 self.cfg.strong_model)
+            passed = parse_verdict(answer_text(verdict))
+            spent = cost(self.cfg, "strong", strong.get("usage") or {}) + cost(self.cfg, "strong", verdict.get("usage") or {})
+            if passed is not None:
+                self.store.record_quality(project=project, passed=passed, cost_usd=spent)
+        except Exception:
+            log.exception("quality check failed")

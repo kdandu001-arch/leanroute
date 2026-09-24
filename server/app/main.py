@@ -174,15 +174,19 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
         since = time.time() - days * 86400
         st = get_store()
         totals = st.snapshot(project=project, since=since)
+        quality = st.quality(project=project, since=since)
         basis = min(days, 7)
-        recent = st.snapshot(project=project, since=time.time() - basis * 86400)
+        recent_since = time.time() - basis * 86400
+        recent_net = st.snapshot(project=project, since=recent_since)["saved_usd"] - st.quality(project=project, since=recent_since)["cost_usd"]
         cfg = state["gateway"].cfg if state["gateway"] else GatewayConfig()
         return {
             "project": project or "all",
             "days": days,
             "totals": totals,
             "daily": st.daily(project=project, since=since),
-            "projected_monthly_saved_usd": round(recent["saved_usd"] / basis * 30, 6),
+            "quality": quality,
+            "net_saved_usd": round(totals["saved_usd"] - quality["cost_usd"], 6),
+            "projected_monthly_saved_usd": round(recent_net / basis * 30, 6),
             "projection_basis_days": basis,
             "pricing": {"cheap_model": cfg.cheap_model, "strong_model": cfg.strong_model,
                         "cheap_usd_per_1m": [cfg.cheap_in, cfg.cheap_out],

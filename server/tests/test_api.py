@@ -31,14 +31,16 @@ class FixedEngine:
         }}
 
 
-def fake_upstream(seen):
+def fake_upstream(seen, judge_says="YES"):
     def handler(request: httpx.Request):
         import json
         body = json.loads(request.content)
         seen.append(body)
+        judging = "Reply with only YES or NO" in str(body["messages"])
         return httpx.Response(200, json={
             "id": "x", "object": "chat.completion", "model": body["model"],
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": judge_says if judging else "ok"},
+                         "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500},
         })
     return httpx.Client(transport=httpx.MockTransport(handler))
@@ -276,3 +278,31 @@ def test_cache_expires():
     chat(c, "hi")
     import time; time.sleep(0.1)
     assert chat(c, "hi").json()["leanroute"]["route"] == "cheap" and len(seen) == 2
+
+
+def test_quality_check_verifies_cheap_answers_and_counts_its_cost():
+    seen, store = [], UsageStore(":memory:")
+    gw = Gateway(FixedEngine(difficulty=0.3), GatewayConfig(upstream_base_url="http://up/v1", guard_mode="laya", quality_rate=1.0),
+                 client=fake_upstream(seen), store=store, guard=FakeGuard())
+    gw._submit = lambda fn, *args: fn(*args)          # run the check now instead of in the background
+    c = TestClient(create_app(engine=gw.engine, gateway=gw))
+    r = chat(c, "Capital of France?").json()
+    assert r["leanroute"]["route"] == "cheap"
+    assert [b["model"] for b in seen] == ["gpt-4o-mini", "gpt-4o", "gpt-4o"]   # answer, strong answer, judge
+    u = c.get("/v1/usage").json()
+    assert u["quality"]["checked"] == 1 and u["quality"]["passed"] == 1 and u["quality"]["cost_usd"] > 0
+    assert u["net_saved_usd"] == round(u["totals"]["saved_usd"] - u["quality"]["cost_usd"], 6)
+
+
+def test_quality_check_failures_and_strong_routes():
+    seen, store = [], UsageStore(":memory:")
+    gw = Gateway(FixedEngine(difficulty=0.3), GatewayConfig(upstream_base_url="http://up/v1", guard_mode="laya", quality_rate=1.0),
+                 client=fake_upstream(seen, judge_says="NO"), store=store, guard=FakeGuard())
+    gw._submit = lambda fn, *args: fn(*args)
+    gw.handle({"model": "auto", "messages": [{"role": "user", "content": "hi"}]})
+    assert store.quality()["checked"] == 1 and store.quality()["passed"] == 0
+    hard = Gateway(FixedEngine(difficulty=2.5), GatewayConfig(upstream_base_url="http://up/v1", guard_mode="laya", quality_rate=1.0),
+                   client=fake_upstream([]), store=store, guard=FakeGuard())
+    hard._submit = lambda fn, *args: fn(*args)
+    hard.handle({"model": "auto", "messages": [{"role": "user", "content": "hard"}]})
+    assert store.quality()["checked"] == 1                                   # only cheap answers are checked

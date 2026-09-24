@@ -99,6 +99,10 @@ The response includes a `leanroute` block (`route`, `reason`, `cost_usd`, `saved
 
 Set `CACHE_TTL_SECONDS` (e.g. `3600`) and identical requests (same project, same messages and settings) are answered from storage for $0, skipping both Laya and the LLM. Off by default, since some apps want a fresh answer every time. **While it's on, LLM responses are stored**; prompts are stored only as a one-way hash. Blocked requests are never cached.
 
+### Quality check: proof the savings are real
+
+Most routers claim savings but never check whether the cheap model's answers were good enough. Set `QUALITY_CHECK_RATE=0.05` and Leanroute re-asks 5% of cheap-routed requests to the strong model in the background, then has the strong model judge whether the cheap answer was as good. The dashboard shows the pass rate (e.g. "91% of 271 sampled cheap answers were judged as good as gpt-4o's") and **subtracts what the checks cost from your savings**. Only pass/fail and cost are stored. The judge is the strong model itself, so treat the pass rate as a strong signal, not proof.
+
 ### Savings dashboard (Leanroute Ledger)
 
 Open **http://localhost:8000/dashboard** to see what the gateway saved you: money saved, % saved, what it would have cost on the strong model, monthly pace, routing split, attacks blocked, and a per-day chart.
@@ -142,7 +146,8 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 - [ ] Hosted Leanroute Pro ($19/month): no server to run
 - [ ] API keys + usage in Supabase, Stripe billing
 - [ ] Streaming in the gateway
-- [ ] Response cache for repeated prompts
+- [x] Response cache for repeated prompts
+- [x] Quality check: verify a sample of cheap answers against the strong model
 - [ ] Fine-tune Studio: upload CSV → custom calibrated model
 - [x] Savings dashboard page
 - [ ] Dashboard for SDK users (SDK reports usage to a server)

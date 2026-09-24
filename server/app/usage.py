@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS events (
     decision_ms       REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_project_ts ON events (project, ts);
+CREATE TABLE IF NOT EXISTS quality_checks (
+    ts       REAL NOT NULL,
+    project  TEXT NOT NULL,
+    passed   INTEGER NOT NULL,   -- 1 if the cheap answer was judged as good as the strong model's
+    cost_usd REAL NOT NULL       -- what the check itself cost (extra strong-model call + judge call)
+);
 """
 
 
@@ -87,3 +93,17 @@ class UsageStore:
         return [{"date": d, "requests": n, "blocked": b or 0, "actual_cost_usd": round(a, 6),
                  "all_strong_cost_usd": round(base, 6), "saved_usd": round(base - a, 6)}
                 for d, n, b, a, base in rows]
+
+    def record_quality(self, *, project: str, passed: bool, cost_usd: float, ts: Optional[float] = None):
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO quality_checks VALUES (?,?,?,?)",
+                             (ts or time.time(), project, int(passed), float(cost_usd)))
+
+    def quality(self, project: Optional[str] = None, since: Optional[float] = None) -> Dict[str, Any]:
+        where, args = self._where(project, since)
+        with self._lock:
+            n, passed, spent = self._db.execute(
+                f"SELECT COUNT(*), COALESCE(SUM(passed),0), COALESCE(SUM(cost_usd),0) FROM quality_checks{where}",
+                args).fetchone()
+        return {"checked": n, "passed": passed, "pass_rate": round(passed / n, 3) if n else None,
+                "cost_usd": round(spent, 6)}

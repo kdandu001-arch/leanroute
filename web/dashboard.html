@@ -73,6 +73,11 @@ th{color:var(--ink-3);font-weight:500}
 .err{color:#fda4af;font-size:13px;min-height:1.4em}
 .empty{text-align:center;padding:40px 16px;color:var(--ink-2)}
 .empty code{font-family:var(--mono);background:#08090d;border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+.qrow{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;color:var(--ink-2);font-size:14px}
+.qbig{font-size:36px;font-weight:600;letter-spacing:-.03em;color:var(--ink)}
+.meter{height:8px;border-radius:4px;background:#1b3a30;overflow:hidden;margin-top:12px}
+.meter i{display:block;height:100%;background:var(--cheap);border-radius:4px 0 0 4px}
+#quality code{font-family:var(--mono);background:#08090d;border:1px solid var(--line);border-radius:6px;padding:2px 6px}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -119,6 +124,12 @@ th{color:var(--ink-3);font-weight:500}
         <p class="hint">Each request is blocked, sent to the cheap model, sent to the strong model, or answered from cache.</p>
         <div class="stack" id="stack" role="img"></div>
         <div class="legend" id="legend"></div>
+      </section>
+
+      <section class="panel" id="qualityPanel">
+        <h2>Quality check</h2>
+        <p class="hint">Were the cheap model's answers good enough? A sample is re-asked to the strong model, which judges them.</p>
+        <div id="quality"></div>
       </section>
 
       <section class="panel">
@@ -189,8 +200,17 @@ function fail(msg){ $("#main").hidden = false; $("#keybox").hidden = true;
 function render(d){
   const t = d.totals;
   $("#heroLbl").textContent = `Saved in the last ${d.days} days` + (d.project !== "all" && d.project !== "default" ? ` · ${d.project}` : "");
-  $("#heroVal").textContent = usd(t.saved_usd);
-  $("#heroSub").innerHTML = t.all_strong_cost_usd ? `<b>${t.saved_pct}% less</b> than sending every request to ${esc(d.pricing.strong_model)}` : "";
+  const q = d.quality || {checked: 0, cost_usd: 0};
+  const net = q.checked ? d.net_saved_usd : t.saved_usd;
+  const netPct = t.all_strong_cost_usd ? Math.round(1000 * net / t.all_strong_cost_usd) / 10 : 0;
+  $("#heroVal").textContent = usd(net);
+  $("#heroSub").innerHTML = t.all_strong_cost_usd ? `<b>${netPct}% less</b> than sending every request to ${esc(d.pricing.strong_model)}` +
+    (q.checked ? `, after ${usd(q.cost_usd)} spent on quality checks` : "") : "";
+  $("#quality").innerHTML = q.checked
+    ? `<div class="qrow"><b class="qbig">${Math.round(100 * q.pass_rate)}%</b><span>of ${num(q.checked)} sampled cheap answers were judged as good as ${esc(d.pricing.strong_model)}'s (${num(q.passed)} passed).</span></div>
+       <div class="meter" role="img" aria-label="${Math.round(100 * q.pass_rate)}% passed"><i style="width:${100 * q.pass_rate}%"></i></div>
+       <p class="hint" style="margin:10px 0 0">Checks cost ${usd(q.cost_usd)}, already subtracted from the savings above. Judged by the strong model, so treat this as a strong signal, not proof.</p>`
+    : `<p class="hint" style="margin:0">Off. Set <code>QUALITY_CHECK_RATE=0.05</code> on the server to double-check 5% of cheap answers.</p>`;
   $("#tBase").textContent = usd(t.all_strong_cost_usd);
   $("#tAct").textContent = usd(t.actual_cost_usd);
   $("#tProj").textContent = usd(d.projected_monthly_saved_usd);
@@ -201,7 +221,7 @@ function render(d){
   $("#empty").hidden = has;
   document.querySelectorAll(".grid2 .panel").forEach(p => p.hidden = !has);
   const p = d.pricing;
-  $("#note").textContent = `Monthly pace = savings from the last ${d.projection_basis_days} days, scaled to 30 days. Savings are estimates: each request is priced on the model it used, and compared with the same tokens on ${p.strong_model} ($${p.strong_usd_per_1m[0]} in / $${p.strong_usd_per_1m[1]} out per 1M tokens) and ${p.cheap_model} ($${p.cheap_usd_per_1m[0]} / $${p.cheap_usd_per_1m[1]}). Prices come from the server's settings; keep them current. Days are in UTC. Prompt text is never stored.`;
+  $("#note").textContent = `Monthly pace = savings from the last ${d.projection_basis_days} days, scaled to 30 days. Savings are estimates: each request is priced on the model it used, and compared with the same tokens on ${p.strong_model} ($${p.strong_usd_per_1m[0]} in / $${p.strong_usd_per_1m[1]} out per 1M tokens) and ${p.cheap_model} ($${p.cheap_usd_per_1m[0]} / $${p.cheap_usd_per_1m[1]}). Prices come from the server's settings; keep them current. Days are in UTC. Prompt text is never stored` + (t.cached ? "; while the response cache is on, LLM answers are stored." : ".");
   if(!has) return;
   renderSplit(t);
   renderDaily(d);
