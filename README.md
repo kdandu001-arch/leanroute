@@ -126,6 +126,7 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 
 ## Roadmap
 
+- [ ] Hosted Leanroute Pro ($19/month): no server to run
 - [ ] API keys + usage in Supabase, Stripe billing
 - [ ] Streaming in the gateway
 - [ ] Response cache for repeated prompts
@@ -135,4 +136,6 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 
 ## License
 
-Apache 2.0. Laya weights and package: Apache 2.0, © Convai Innovations.
+Leanroute is free and open source under Apache 2.0, © 2026 Kushal. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+
+Built on Laya (weights and package: Apache 2.0, © Convai Innovations), which is downloaded at install time and not included in this repo.

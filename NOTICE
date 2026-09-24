@@ -1,0 +1,12 @@
+Leanroute
+Copyright 2026 Kushal (https://github.com/kdandu001-arch)
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It uses the following third-party software, downloaded at install time and not
+included in this repository:
+
+- Laya (https://huggingface.co/convaiinnovations/laya)
+  Copyright Convai Innovations. Licensed under the Apache License, Version 2.0.
+- ModernBERT (https://huggingface.co/answerdotai/ModernBERT-large), the encoder Laya is built on.
+  Licensed under the Apache License, Version 2.0.

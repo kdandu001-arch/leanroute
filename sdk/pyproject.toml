@@ -23,7 +23,7 @@ local = ["laya>=0.3.6"]          # run Laya in-process (downloads the model)
 dev = ["pytest>=8"]
 
 [project.urls]
-Homepage = "https://github.com/YOUR_USERNAME/leanroute"
+Homepage = "https://github.com/kdandu001-arch/leanroute"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/leanroute"]

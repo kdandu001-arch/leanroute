@@ -435,7 +435,7 @@ footer{padding-block:60px 40px;color:var(--ink-3);font-size:14px}
 <pre id="c1"><span class="k">from</span> openai <span class="k">import</span> OpenAI
 
 client = OpenAI(
-    base_url=<span class="s">"https://utility-gates-huntington-grip.trycloudflare.com/v1"</span>,  <span class="c"># was api.openai.com</span>
+    base_url=<span class="s">"http://localhost:8000/v1"</span>,  <span class="c"># your Leanroute server (was api.openai.com)</span>
     api_key=<span class="s">"lr_your_key"</span>,
 )
 r = client.chat.completions.create(
@@ -443,7 +443,7 @@ r = client.chat.completions.create(
     messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">"Capital of Australia?"</span>}],
 )
 <span class="c"># r.leanroute → {"route": "cheap", "saved_usd": 0.0021}</span></pre>
-<pre id="c2" hidden>curl https://utility-gates-huntington-grip.trycloudflare.com/v1/decide \
+<pre id="c2" hidden>curl http://localhost:8000/v1/decide \
   -H <span class="s">"Authorization: Bearer lr_your_key"</span> \
   -H <span class="s">"Content-Type: application/json"</span> \
   -d <span class="s">'{
@@ -454,7 +454,7 @@ r = client.chat.completions.create(
     }
   }'</span>
 <span class="c"># → {"answers": {"churn_risk": {"noul": 0.91}}}</span></pre>
-<pre id="c3" hidden>git clone https://github.com/you/leanroute
+<pre id="c3" hidden>git clone https://github.com/kdandu001-arch/leanroute
 <span class="k">cd</span> leanroute/server && cp .env.example .env
 docker compose up -d
 
@@ -464,11 +464,11 @@ docker compose up -d
 </div></section>
 
 <section id="pricing" style="padding-top:0"><div class="wrap">
-  <div class="sh center"><div class="eyebrow">Pricing</div><h2>Free to self-host. <em>Pay for convenience.</em></h2></div>
+  <div class="sh center"><div class="eyebrow">Pricing</div><h2>Free and open source. <em>Hosted plans coming soon.</em></h2></div>
   <div class="plans">
-    <div class="plan"><h3>Open source</h3><div class="price">$0 <small>forever</small></div><ul><li>Full source, Apache 2.0</li><li>Unlimited decisions</li><li>Docker, one command</li></ul><a class="btn ghost" href="#developers">Read the docs</a></div>
-    <div class="plan hot"><h3>Pro</h3><div class="price">$19 <small>/month</small></div><ul><li>100k hosted decisions a month</li><li>Cost Cutter gateway + savings dashboard</li><li>1 fine-tuned custom model</li></ul><a class="btn violet" href="#playground">Start free trial</a></div>
-    <div class="plan"><h3>Team</h3><div class="price">Custom</div><ul><li>Guardrails at scale</li><li>Multiple custom models</li><li>Priority support</li></ul><a class="btn ghost" href="#playground">Talk to us</a></div>
+    <div class="plan hot"><h3>Open source</h3><div class="price">$0 <small>forever</small></div><ul><li>Full source, Apache 2.0</li><li>Unlimited decisions</li><li>Docker, one command</li><li>Python SDK + OpenAI-compatible gateway</li></ul><a class="btn violet" href="https://github.com/kdandu001-arch/leanroute" rel="noopener">Get it on GitHub</a></div>
+    <div class="plan"><h3>Pro <span class="chip c-violet">Coming soon</span></h3><div class="price">$19 <small>/month</small></div><ul><li>Hosted for you, no server to run</li><li>Savings dashboard</li><li>A model fine-tuned on your data</li></ul><a class="btn ghost" href="https://github.com/kdandu001-arch/leanroute" rel="noopener">Watch on GitHub for launch</a></div>
+    <div class="plan"><h3>Team <span class="chip c-violet">Coming soon</span></h3><div class="price">Custom</div><ul><li>Guardrails at scale</li><li>Multiple custom models</li><li>Priority support</li></ul><a class="btn ghost" href="https://github.com/kdandu001-arch/leanroute/issues" rel="noopener">Get in touch</a></div>
   </div>
 </div></section>
 
@@ -486,7 +486,7 @@ docker compose up -d
     <div><a class="logo" href="#top" style="margin-bottom:14px"><span class="mark" aria-hidden="true"></span>Leanroute</a><p style="max-width:32ch">The open-source decision layer for AI apps. Built on Laya by Convai Innovations.</p></div>
     <div><h4>Product</h4><a href="#playground">Playground</a><a href="#features">Features</a><a href="#savings">Savings</a><a href="#pricing">Pricing</a></div>
     <div><h4>Developers</h4><a href="#developers">Quickstart</a><a href="/docs">API reference</a><a href="https://huggingface.co/convaiinnovations/laya" rel="noopener">Laya model card</a></div>
-    <div><h4>Project</h4><a href="https://github.com/" rel="noopener">GitHub</a><a href="#pricing">License: Apache 2.0</a></div>
+    <div><h4>Project</h4><a href="https://github.com/kdandu001-arch/leanroute" rel="noopener">GitHub</a><a href="#pricing">License: Apache 2.0</a></div>
   </div>
   <div class="giant" aria-hidden="true">leanroute</div>
   <div class="legal"><span>© 2026 Leanroute</span><span>Decisions are probabilistic. Keep a human in the loop for high-stakes actions.</span></div>
