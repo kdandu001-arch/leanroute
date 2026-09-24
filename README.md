@@ -46,12 +46,12 @@ cd server
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env            # edit values if you like
-uvicorn app.main:app --port 8000
+uvicorn app.main:app --port 8000 --env-file .env   # --env-file loads your settings from .env
 ```
 
 The first start downloads the Laya weights from Hugging Face (about 1-2 GB) and preloads them. Then open `http://localhost:8000/docs` for the interactive API docs.
 
-Want the UI without the model? `LEANROUTE_ENGINE=mock uvicorn app.main:app --port 8000` runs a keyword stand-in that returns the same response shape. Its responses are labelled `"engine": "mock"`; it is **not** Laya and its numbers mean nothing.
+Want the UI without the model? `LEANROUTE_ENGINE=mock uvicorn app.main:app --port 8000 --env-file .env` runs a keyword stand-in that returns the same response shape. Its responses are labelled `"engine": "mock"`; it is **not** Laya and its numbers mean nothing.
 
 Then open **http://localhost:8000**: the server also serves the website, and the Playground connects to it automatically (green **Live API** badge).
 
@@ -88,9 +88,9 @@ Templates: `scam_check`, `ticket_routing`, `email_triage`, `lead_score`, `guardr
 
 Drop-in OpenAI-compatible endpoint. Send `model: "auto"` and Leanroute:
 
-1. runs one Laya pass for guardrails + difficulty,
-2. blocks jailbreak / injection attempts (no LLM call, no cost),
-3. sends easy, non-sensitive, confident requests to `CHEAP_MODEL`,
+1. runs a Laya guard pass and blocks jailbreak / injection attempts (no LLM call, no cost),
+2. runs a Laya router pass (difficulty + sensitivity) on everything that wasn't blocked,
+3. sends easy, non-sensitive requests to `CHEAP_MODEL`,
 4. sends everything else to `STRONG_MODEL`.
 
 The response includes a `leanroute` block (`route`, `reason`, `cost_usd`, `saved_usd`). `GET /v1/stats` shows totals and % saved versus sending everything to the strong model. Pin a specific model name to skip routing and keep only the guardrail. Streaming isn't supported yet.
@@ -130,6 +130,7 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 * Laya **decides**; it doesn't write. Summaries, answers and chat stay with the LLM.
 * Short text only: roughly a page per call (`MAX_INPUT_CHARS`, default 4,000).
 * Keep choice questions to a handful of options.
+* **Real results so far are a small sample.** On 14 hand-written prompts against real Laya and Groq (Sep 2026): 4/4 attacks blocked, 4/4 hard questions sent to the strong model, 4/6 easy questions sent to the cheap model, and **2/10 ordinary questions wrongly blocked** ("Give me a synonym for happy", "Say hello in French"). A larger labelled evaluation is next; until then, watch the blocked count on your dashboard.
 * Base checkpoints are weak zero-shot on niche domains and ship over-confident. For production, **fine-tune on your own labelled examples and fit a temperature** (see the Laya model card). Start with conservative thresholds and keep a human in the loop for high-stakes actions.
 
 ## Roadmap

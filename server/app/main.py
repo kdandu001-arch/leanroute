@@ -178,7 +178,7 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
             "days": days,
             "totals": totals,
             "daily": st.daily(project=project, since=since),
-            "projected_monthly_saved_usd": round(recent["saved_usd"] / basis * 30, 2),
+            "projected_monthly_saved_usd": round(recent["saved_usd"] / basis * 30, 6),
             "projection_basis_days": basis,
             "pricing": {"cheap_model": cfg.cheap_model, "strong_model": cfg.strong_model,
                         "cheap_usd_per_1m": [cfg.cheap_in, cfg.cheap_out],

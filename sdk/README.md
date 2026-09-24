@@ -92,7 +92,7 @@ Use your provider's **current** prices; savings are only as accurate as those nu
 
 ```python
 from leanroute import Policy
-lr = Leanroute(policy=Policy(block_threshold=0.9, easy_max=1.0, min_confidence=0.6))
+lr = Leanroute(policy=Policy(block_threshold=0.9, easy_max=1.0, min_confidence=0.0))
 ```
 
 **Fail-open by default:** if the decision layer errors (server down, model not loaded), requests go to your strong model so your app keeps working. Set `fail_open=False` to raise instead.

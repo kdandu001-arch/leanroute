@@ -232,12 +232,13 @@ function renderDaily(d){
     const dt = new Date(today - i * 86400000).toISOString().slice(0,10);
     rows.push(byDate[dt] || {date:dt, requests:0, blocked:0, actual_cost_usd:0, all_strong_cost_usd:0, saved_usd:0});
   }
-  const W = $("#chart").clientWidth || 800, H = 260, L = 56, R = 8, T = 12, B = 28;
-  const iw = W - L - R, ih = H - T - B;
   const max = niceMax(Math.max(...rows.map(r => r.saved_usd)));
+  const ticks = [0, max/4, max/2, max*3/4, max];
+  const W = $("#chart").clientWidth || 800, H = 260, R = 8, T = 12, B = 28;
+  const L = 16 + 7.3 * Math.max(...ticks.map(v => usd(v).length));
+  const iw = W - L - R, ih = H - T - B;
   const y = v => T + ih - (Math.max(0, v) / max) * ih;
   const band = iw / rows.length, bw = Math.max(2, Math.min(24, band - 2));
-  const ticks = [0, max/4, max/2, max*3/4, max];
   const fmtDay = s => new Date(s + "T00:00:00Z").toLocaleDateString(undefined, {month:"short", day:"numeric", timeZone:"UTC"});
   const every = Math.ceil(rows.length / Math.max(2, Math.floor(iw / 70)));
   let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Money saved per day, last ${d.days} days">`;

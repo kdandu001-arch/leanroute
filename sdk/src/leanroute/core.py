@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .engines import Engine, LocalEngine, RemoteEngine
-from .questions import GATE_QUESTIONS, yes_no
+from .questions import GUARD_QUESTIONS, ROUTER_QUESTIONS, yes_no
 
 Messages = List[Dict[str, Any]]
 
@@ -62,7 +62,7 @@ class Decision:
 class Policy:
     block_threshold: float = 0.85   # block when P(jailbreak or injection) >= this
     easy_max: float = 1.2           # difficulty (0-3) at or below -> cheap model
-    min_confidence: float = 0.55    # below this, don't trust "easy" -> strong model
+    min_confidence: float = 0.0     # optional: require this confidence before trusting "easy". Off by default: Laya's difficulty confidence is low for every prompt, so it doesn't separate easy from hard
     sensitive_max: float = 0.5      # money/legal/medical/safety -> strong model
 
 
@@ -160,8 +160,17 @@ class Leanroute:
               strong: Optional[str] = None) -> Decision:
         text = text_of(prompt)[: self.max_chars]
         t0 = time.perf_counter()
+        p = self.policy
         try:
-            a = _to_answers(self.engine.predict({"prompt": text, "request": text}, GATE_QUESTIONS))
+            g = _to_answers(self.engine.predict({"prompt": text}, GUARD_QUESTIONS))
+            jb, inj = float(g["g_jailbreak"].value), float(g["g_injection"].value)
+            if max(jb, inj) >= p.block_threshold:
+                ms = (time.perf_counter() - t0) * 1000
+                d = Decision("blocked", None, f"jailbreak={jb:.2f} injection={inj:.2f}",
+                             {"jailbreak": jb, "injection": inj}, ms)
+                self.last = d
+                return d
+            a = _to_answers(self.engine.predict({"request": text}, ROUTER_QUESTIONS))
         except Exception as e:
             if not self.fail_open:
                 raise
@@ -169,14 +178,10 @@ class Leanroute:
             self.last = d
             return d
         ms = (time.perf_counter() - t0) * 1000
-        p = self.policy
-        jb, inj = float(a["g_jailbreak"].value), float(a["g_injection"].value)
         diff, sens = a["r_difficulty"], float(a["r_sensitive"].value)
         scores = {"jailbreak": jb, "injection": inj, "difficulty": float(diff.value),
                   "difficulty_confidence": diff.confidence, "sensitive": sens}
-        if max(jb, inj) >= p.block_threshold:
-            d = Decision("blocked", None, f"jailbreak={jb:.2f} injection={inj:.2f}", scores, ms)
-        elif float(diff.value) <= p.easy_max and diff.confidence >= p.min_confidence and sens < p.sensitive_max:
+        if float(diff.value) <= p.easy_max and diff.confidence >= p.min_confidence and sens < p.sensitive_max:
             d = Decision("cheap", cheap, f"easy (difficulty {float(diff.value):.2f}, conf {diff.confidence:.2f})", scores, ms)
         else:
             why = "sensitive" if sens >= p.sensitive_max else f"difficulty {float(diff.value):.2f}, conf {diff.confidence:.2f}"

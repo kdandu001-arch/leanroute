@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from leanroute import Blocked, Leanroute, choice, level, yes_no
+from leanroute import Blocked, Leanroute, Policy, choice, level, yes_no
 
 
 class FakeEngine:
@@ -69,8 +69,21 @@ def test_route_cheap_strong_blocked():
     assert Leanroute(engine=FakeEngine(difficulty=0.3)).route(MSG, "small", "big").model == "small"
     assert Leanroute(engine=FakeEngine(difficulty=2.6)).route(MSG, "small", "big").route == "strong"
     assert Leanroute(engine=FakeEngine(sensitive=0.9)).route(MSG, "small", "big").route == "strong"
-    assert Leanroute(engine=FakeEngine(conf=0.2)).route(MSG, "small", "big").route == "strong"
+    assert Leanroute(engine=FakeEngine(difficulty=0.3, conf=0.2)).route(MSG, "small", "big").route == "cheap"
+    strict = Leanroute(engine=FakeEngine(difficulty=0.3, conf=0.2), policy=Policy(min_confidence=0.55))
+    assert strict.route(MSG, "small", "big").route == "strong"
     assert Leanroute(engine=FakeEngine(jailbreak=0.97)).route(MSG, "small", "big").blocked
+
+
+def test_guard_and_router_asked_separately():
+    eng = FakeEngine(difficulty=0.3)
+    Leanroute(engine=eng).route(MSG, "small", "big")
+    (s1, q1), (s2, q2) = eng.calls
+    assert set(s1) == {"prompt"} and set(q1) == {"g_jailbreak", "g_injection"}
+    assert set(s2) == {"request"} and set(q2) == {"r_difficulty", "r_sensitive"}
+    blocked = FakeEngine(jailbreak=0.99)
+    Leanroute(engine=blocked).route(MSG, "small", "big")
+    assert len(blocked.calls) == 1  # attacks skip the router pass
 
 
 def test_uses_last_user_message():
