@@ -53,6 +53,49 @@ GUARDS = {
 }
 
 
+def real_label_routing():
+    """Routing measured on real 'was the cheap answer good enough?' labels (eval/train_router.py)."""
+    routing = DATA / "routing"
+    needed = [routing / "validation.parquet", routing / "val_router_p.npy", routing / "val_laya_sample.npy"]
+    if not all(p.exists() for p in needed):
+        return ["", "Real-label routing results skipped: run `python eval/train_router.py --laya-url ...` first."]
+    import numpy as np
+    import pyarrow.parquet as pq
+    scores = pq.read_table(needed[0], columns=["mixtral_score"]).to_pydict()["mixtral_score"]
+    y = np.array([int(s) < 4 for s in scores])            # True = the cheap answer was NOT good enough
+    p = np.load(needed[1])
+    idx, laya = np.load(needed[2])
+    idx = idx.astype(int)
+
+    def good_when_cheapest(score, labels, share):
+        k = int(share * len(labels))
+        return 1 - labels[np.argsort(score)[:k]].mean()
+
+    at_default = p < 0.107
+    lines = [
+        "", "## Routing on real labels (default router)", "",
+        "The only test that matches the real question: *will the cheap model's answer be good enough?* "
+        f"`routellm/gpt4_dataset` (Apache-2.0) has real prompts whose cheap-model (Mixtral) answers GPT-4 scored "
+        f"1-5; \"good enough\" = 4 or 5. Held-out validation split, {len(y):,} prompts; "
+        f"{pct(1 - y.mean())} of cheap answers were good enough with no routing at all.", "",
+        f"| Share of traffic sent to the cheap model | Cheap answers good enough: Leanroute router | Laya difficulty |",
+        "|---|---|---|",
+        *[f"| {pct(s)} | {pct(good_when_cheapest(p[idx], y[idx], s))} | {pct(good_when_cheapest(laya, y[idx], s))} |"
+          for s in (0.3, 0.5, 0.7, 0.85)],
+        "",
+        f"On the same {len(idx):,} prompts, AUC for spotting answers that won't be good enough: Leanroute router "
+        f"**{auc(p[idx][y[idx]], p[idx][~y[idx]]):.2f}**, Laya **{auc(laya[y[idx]], laya[~y[idx]]):.2f}** "
+        "(0.5 = coin flip). At the default `ROUTER_THRESHOLD=0.107` the router sends "
+        f"{pct(at_default.mean())} of all {len(y):,} validation prompts to the cheap model, and "
+        f"{pct(1 - y[at_default].mean())} of those answers were good enough.", "",
+        "On 14 hand-written prompts labelled by us as easy or hard, the router agreed with our labels on 10 "
+        "(it sent three simple ones to the strong model and one textbook proof to the cheap model); Laya agreed on "
+        "13. Our hand labels are guesses about difficulty; the table above uses graded answers, so it is the "
+        "stronger evidence, but the router is a clear improvement, not a solved problem.",
+    ]
+    return lines
+
+
 def main():
     rows = load()
     test = [r for r in rows if r["split"] == "test"]
@@ -83,8 +126,9 @@ def main():
     easy = [r for r in test if r["label_difficulty"] == "easy"]
     hard = [r for r in test if r["label_difficulty"] == "hard"]
     cheap = lambda r, e: r["difficulty"] <= e and r["sensitive"] < SENSITIVE_MAX
+    lines += real_label_routing()
     lines += [
-        "", "## Routing: easy vs. hard", "",
+        "", "## Routing: easy vs. hard (proxy test)", "",
         f"How well Laya's difficulty score separates easy from hard requests: AUC "
         f"**{auc([r['difficulty'] for r in hard], [r['difficulty'] for r in easy]):.2f}** "
         "(0.5 = coin flip, 1.0 = perfect).", "",

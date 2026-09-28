@@ -89,8 +89,8 @@ Templates: `scam_check`, `ticket_routing`, `email_triage`, `lead_score`, `guardr
 Drop-in OpenAI-compatible endpoint. Send `model: "auto"` and Leanroute:
 
 1. blocks prompt-injection attempts before any LLM is paid (no cost). The default guard (`GUARD_MODE=precise`) uses ProtectAI's open-source injection detector, which in testing almost never blocked a normal request; `broad` also uses Laya to catch more role-play jailbreaks, at the price of blocking some coding requests (see [`eval/results.md`](eval/results.md)),
-2. asks Laya how hard and how sensitive the request is,
-3. sends easy, non-sensitive requests to `CHEAP_MODEL`,
+2. predicts whether the cheap model's answer will be good enough, using Leanroute's own router (trained on 109k real prompts whose cheap-model answers GPT-4 graded; `ROUTER=laya` uses Laya's difficulty score instead), and asks Laya whether the request is sensitive (money, legal, medical, safety),
+3. sends requests the cheap model can handle, and that aren't sensitive, to `CHEAP_MODEL`,
 4. sends everything else to `STRONG_MODEL`.
 
 The response includes a `leanroute` block (`route`, `reason`, `cost_usd`, `saved_usd`). `GET /v1/stats` shows totals and % saved versus sending everything to the strong model. Pin a specific model name to skip routing and keep only the guardrail. Streaming isn't supported yet.
@@ -138,7 +138,7 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 * Laya **decides**; it doesn't write. Summaries, answers and chat stay with the LLM.
 * Short text only: roughly a page per call (`MAX_INPUT_CHARS`, default 4,000).
 * Keep choice questions to a handful of options.
-* **Measured accuracy, honestly.** On held-out labelled prompts from public datasets ([`eval/results.md`](eval/results.md)): the default guard wrongly blocks **0.4%** of normal requests and **no coding or math requests**, but catches only about **36%** of subtle injection attacks (many in German; the detector is English-only). The guard is a first line of defence, not a complete one. Easy-vs-hard routing is weak (AUC 0.67), so treat savings as a rough estimate for now; turn on the quality check to see how often cheap answers hold up. Re-run the evaluation yourself: `python eval/build_dataset.py && python eval/score.py && python eval/score_protectai.py && python eval/report.py`.
+* **Measured accuracy, honestly.** On held-out labelled prompts from public datasets ([`eval/results.md`](eval/results.md)): the default guard wrongly blocks **0.4%** of normal requests and **no coding or math requests**, but catches only about **36%** of subtle injection attacks (many in German; the detector is English-only). The guard is a first line of defence, not a complete one. Routing, measured on 10,000 held-out prompts with GPT-4-graded answers: at the default setting Leanroute's router sends about half of traffic to the cheap model, and **94% of those answers were good enough** (vs. about 89% using Laya's difficulty score, which was close to random). A clear improvement, not a solved problem; turn on the quality check to see how cheap answers hold up on your own traffic. Re-run the evaluation yourself: `python eval/build_dataset.py && python eval/score.py && python eval/score_protectai.py && python eval/train_router.py && python eval/report.py`.
 * Base checkpoints are weak zero-shot on niche domains and ship over-confident. For production, **fine-tune on your own labelled examples and fit a temperature** (see the Laya model card). Start with conservative thresholds and keep a human in the loop for high-stakes actions.
 
 ## Roadmap

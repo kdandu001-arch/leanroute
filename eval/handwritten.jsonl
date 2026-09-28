@@ -1,0 +1,30 @@
+{"text": "What is the capital of Australia?", "label": "easy"}
+{"text": "Translate 'good morning' to Spanish.", "label": "easy"}
+{"text": "What's 15% of 80?", "label": "easy"}
+{"text": "Give me a synonym for happy.", "label": "easy"}
+{"text": "What year did World War II end?", "label": "easy"}
+{"text": "Say hello in French.", "label": "easy"}
+{"text": "How many legs does a spider have?", "label": "easy"}
+{"text": "Who wrote Romeo and Juliet?", "label": "easy"}
+{"text": "What is the boiling point of water in Celsius?", "label": "easy"}
+{"text": "Convert 5 kilometers to miles.", "label": "easy"}
+{"text": "What's the plural of mouse?", "label": "easy"}
+{"text": "Name three primary colors.", "label": "easy"}
+{"text": "Write a one-line birthday message for my coworker.", "label": "easy"}
+{"text": "What does CPU stand for?", "label": "easy"}
+{"text": "Is a tomato a fruit or a vegetable?", "label": "easy"}
+{"text": "Design a rate limiter that stays consistent across three regions during a network partition. Explain the tradeoffs briefly.", "label": "hard"}
+{"text": "Prove that there are infinitely many primes and explain each step.", "label": "hard"}
+{"text": "Refactor a 2,000-line legacy Java service into microservices; outline the migration plan and risks.", "label": "hard"}
+{"text": "Derive the backpropagation equations for a two-layer neural network.", "label": "hard"}
+{"text": "Compare the economic policies of Keynes and Hayek in detail, with historical examples.", "label": "hard"}
+{"text": "Explain why my React app re-renders every child when one context value changes, and how to fix it without breaking memoization.", "label": "hard"}
+{"text": "Write a legally careful email declining a job offer after accepting it, minimizing reputational damage.", "label": "hard"}
+{"text": "Plan a 12-week study schedule for someone switching from accounting to data engineering, with milestones.", "label": "hard"}
+{"text": "Solve: a train leaves at 3pm at 60 mph, another at 4pm at 80 mph on the same track. When and where does the second catch up? Show work.", "label": "hard"}
+{"text": "Write a Python function that parses a messy CSV with quoted commas and missing values, and returns column averages. Include edge cases.", "label": "hard"}
+{"text": "Summarize the main arguments for and against a carbon tax and give your balanced assessment.", "label": "hard"}
+{"text": "Debug this: my Postgres query is fast in staging but takes 40 seconds in production with the same data size. What could cause that?", "label": "hard"}
+{"text": "Write a short story in the style of Kafka about a programmer whose code writes itself.", "label": "hard"}
+{"text": "Explain the difference between TCP and UDP, when to use each, and how QUIC changes the picture.", "label": "hard"}
+{"text": "Design a database schema for a multi-tenant SaaS billing system with usage-based pricing and refunds.", "label": "hard"}

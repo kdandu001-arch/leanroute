@@ -4,8 +4,9 @@ For every chat request it:
 
   * answers identical repeat requests from the response cache (if enabled) for $0,
   * blocks prompt-injection / jailbreak attempts before any LLM is paid (see GUARD_MODE),
-  * asks Laya how hard and how sensitive the request is,
-  * sends easy requests to a cheap model and hard or sensitive ones to the strong model,
+  * predicts whether the cheap model's answer will be good enough (Leanroute's trained router) and asks
+    Laya whether the request is sensitive,
+  * sends the rest to a cheap model and hard or sensitive requests to the strong model,
   * records what that cost versus sending everything to the strong model,
   * optionally double-checks a sample of cheap answers against the strong model (QUALITY_CHECK_RATE).
 """
@@ -24,6 +25,7 @@ import httpx
 
 from .cache import ResponseCache, request_key
 from .guard import ProtectAIGuard
+from .learned_router import LearnedRouter
 from .usage import UsageStore
 
 log = logging.getLogger("leanroute")
@@ -57,6 +59,11 @@ class GatewayConfig:
     protectai_threshold: float = field(default_factory=lambda: _f("PROTECTAI_THRESHOLD", 0.66))
     # Laya's part of the guard. Blank = 0.99 in broad mode, 0.92 in laya mode.
     laya_threshold: Optional[float] = field(default_factory=lambda: _f("LAYA_GUARD_THRESHOLD", 0) or None)
+    # Router: "leanroute" (default) is our own router, trained on real "was the cheap answer good enough?"
+    # labels (eval/train_router.py). "laya" uses Laya's difficulty score, which was close to random on
+    # those labels (eval/results.md). ROUTER_THRESHOLD 0.107 sends about half of traffic to the cheap model.
+    router: str = field(default_factory=lambda: os.getenv("ROUTER", "leanroute").strip().lower())
+    router_threshold: float = field(default_factory=lambda: _f("ROUTER_THRESHOLD", 0.107))
     easy_max_difficulty: float = field(default_factory=lambda: _f("ROUTER_EASY_MAX", 1.2))
     # Off by default: Laya's difficulty confidence is low for every prompt, so it doesn't separate easy from hard.
     min_confidence: float = field(default_factory=lambda: _f("ROUTER_MIN_CONFIDENCE", 0.0))
@@ -67,6 +74,8 @@ class GatewayConfig:
     def __post_init__(self):
         if self.guard_mode not in ("precise", "broad", "laya", "off"):
             raise ValueError(f"GUARD_MODE must be precise, broad, laya or off (got {self.guard_mode!r})")
+        if self.router not in ("leanroute", "laya"):
+            raise ValueError(f"ROUTER must be leanroute or laya (got {self.router!r})")
 
 
 # Asked in two separate Laya passes, as Laya's own presets are meant to be used. Mixing them in one
@@ -95,9 +104,12 @@ def last_user_text(messages: List[Dict[str, Any]]) -> str:
     return ""
 
 
-def decide_route(answers: Dict[str, Any], cfg: GatewayConfig) -> Dict[str, Any]:
+def decide_route(answers: Dict[str, Any], cfg: GatewayConfig, needs_strong: Optional[float] = None) -> Dict[str, Any]:
     diff = answers["r_difficulty"]
     sens = answers["r_sensitive"]["noul"]
+    if needs_strong is not None:  # ROUTER=leanroute; Laya still sends sensitive requests to the strong model
+        why = f"router needs-strong={needs_strong:.2f}, sensitive={sens:.2f}"
+        return {"route": "cheap" if needs_strong < cfg.router_threshold and sens < 0.5 else "strong", "reason": why}
     if diff["score"] <= cfg.easy_max_difficulty and diff["confidence"] >= cfg.min_confidence and sens < 0.5:
         return {"route": "cheap", "reason": f"difficulty={diff['score']:.2f} (conf {diff['confidence']:.2f}), sensitive={sens:.2f}"}
     return {"route": "strong", "reason": f"difficulty={diff['score']:.2f} (conf {diff['confidence']:.2f}), sensitive={sens:.2f}"}
@@ -146,12 +158,13 @@ def estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
 
 class Gateway:
     def __init__(self, engine, cfg: Optional[GatewayConfig] = None, client: Optional[httpx.Client] = None,
-                 store: Optional[UsageStore] = None, cache: Optional[ResponseCache] = None, guard=None):
+                 store: Optional[UsageStore] = None, cache: Optional[ResponseCache] = None, guard=None, router=None):
         self.engine = engine
         self.cfg = cfg or GatewayConfig()
         self.store = store or UsageStore(":memory:")
         self.cache = cache or ResponseCache(ttl_seconds=0, path=":memory:")
         self.guard = guard or ProtectAIGuard()  # loads its model on first use
+        self.router = router or LearnedRouter()  # used when ROUTER=leanroute; loads on first use
         self.client = client or httpx.Client(timeout=self.cfg.timeout_s)
         self._submit = lambda fn, *args: threading.Thread(target=fn, args=args, daemon=True).start()
 
@@ -191,9 +204,10 @@ class Gateway:
         if why_blocked:
             d = {"route": "blocked", "reason": f"guardrail: {why_blocked}"}
         elif requested in ("auto", "", None):
-            router = self.engine.predict({"request": text}, ROUTER_QUESTIONS)
-            engine = router.get("engine", engine)
-            d = decide_route(router["answers"], self.cfg)
+            laya = self.engine.predict({"request": text}, ROUTER_QUESTIONS)
+            engine = laya.get("engine", engine)
+            need = self.router.needs_strong(text) if self.cfg.router == "leanroute" else None
+            d = decide_route(laya["answers"], self.cfg, need)
         else:
             d = {"route": "pinned", "reason": "caller chose the model"}
         decision_ms = (time.perf_counter() - t0) * 1000
