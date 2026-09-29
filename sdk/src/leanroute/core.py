@@ -69,13 +69,20 @@ class Policy:
     guard_mode: str = "precise"
     detector_threshold: float = 0.66  # block when P(injection) from the detector >= this
     laya_threshold: Optional[float] = None  # Laya's part: None = 0.99 in broad mode, 0.92 in laya mode
-    easy_max: float = 1.2           # difficulty (0-3) at or below -> cheap model
+    # Router: "leanroute" (default) = trained on real graded cheap-model answers, used when the engine provides
+    # it (LocalEngine, RemoteEngine); "laya" = Laya's difficulty score. Lower threshold = more cautious;
+    # 0.107 sends about half of traffic to the cheap model (eval/results.md).
+    router: str = "leanroute"
+    router_threshold: float = 0.107
+    easy_max: float = 1.2           # ROUTER=laya: difficulty (0-3) at or below -> cheap model
     min_confidence: float = 0.0     # optional: require this confidence before trusting "easy". Off by default: Laya's difficulty confidence is low for every prompt, so it doesn't separate easy from hard
     sensitive_max: float = 0.5      # money/legal/medical/safety -> strong model
 
     def __post_init__(self):
         if self.guard_mode not in ("precise", "broad", "laya", "off"):
             raise ValueError(f"guard_mode must be precise, broad, laya or off (got {self.guard_mode!r})")
+        if self.router not in ("leanroute", "laya"):
+            raise ValueError(f"router must be leanroute or laya (got {self.router!r})")
 
 
 class Stats:
@@ -181,6 +188,8 @@ class Leanroute:
                 self.last = d
                 return d
             a = _to_answers(self.engine.predict({"request": text}, ROUTER_QUESTIONS))
+            trained = getattr(self.engine, "needs_strong", None) if p.router == "leanroute" else None
+            need = float(trained(text)) if trained else None
         except Exception as e:
             if not self.fail_open:
                 raise
@@ -190,7 +199,14 @@ class Leanroute:
         ms = (time.perf_counter() - t0) * 1000
         diff, sens = a["r_difficulty"], float(a["r_sensitive"].value)
         scores.update({"difficulty": float(diff.value), "difficulty_confidence": diff.confidence, "sensitive": sens})
-        if float(diff.value) <= p.easy_max and diff.confidence >= p.min_confidence and sens < p.sensitive_max:
+        if need is not None:  # Leanroute's trained router decides; Laya still vetoes sensitive requests
+            scores["needs_strong"] = need
+            if need < p.router_threshold and sens < p.sensitive_max:
+                d = Decision("cheap", cheap, f"router needs-strong={need:.2f}", scores, ms)
+            else:
+                why = "sensitive" if sens >= p.sensitive_max else f"router needs-strong={need:.2f}"
+                d = Decision("strong", strong, why, scores, ms)
+        elif float(diff.value) <= p.easy_max and diff.confidence >= p.min_confidence and sens < p.sensitive_max:
             d = Decision("cheap", cheap, f"easy (difficulty {float(diff.value):.2f}, conf {diff.confidence:.2f})", scores, ms)
         else:
             why = "sensitive" if sens >= p.sensitive_max else f"difficulty {float(diff.value):.2f}, conf {diff.confidence:.2f}"

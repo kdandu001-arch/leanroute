@@ -429,3 +429,12 @@ def test_playground_rate_limit_per_visitor_behind_proxy(monkeypatch):
     post = lambda ip: c.post("/v1/decide", json=q, headers={"X-Forwarded-For": f"{ip}, 10.0.0.1"}).status_code
     assert [post("1.1.1.1"), post("1.1.1.1"), post("1.1.1.1")] == [200, 200, 429]
     assert post("2.2.2.2") == 200          # a different visitor has their own limit
+
+
+def test_router_endpoint_returns_trained_router_score():
+    seen = []
+    gw = Gateway(FixedEngine(), GatewayConfig(upstream_base_url="http://up/v1", guard_mode="laya"),
+                 client=fake_upstream(seen), guard=FakeGuard(), router=FakeRouter(0.42))
+    c = TestClient(create_app(engine=gw.engine, gateway=gw))
+    r = c.post("/v1/router", json={"text": "Explain TCP"})
+    assert r.status_code == 200 and r.json()["needs_strong"] == 0.42

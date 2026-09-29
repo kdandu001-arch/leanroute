@@ -8,7 +8,7 @@ Before your app pays an LLM, Leanroute checks three things, locally and for $0 p
 2. **How hard is it?** Easy → your cheap model. Hard or sensitive → your strong model.
 3. **Anything else you ask**, e.g. "is this spam?", "which team?", "hot lead?" → answered by [Laya](https://huggingface.co/convaiinnovations/laya) (Apache 2.0) with a probability, no LLM at all.
 
-> **Version 0.1 note:** this package decides "easy or hard" with Laya's difficulty score. The Leanroute *server* uses a trained router that was measurably better on real graded answers ([results](https://github.com/kdandu001-arch/leanroute/blob/main/eval/results.md)); bringing it to this package is planned for 0.2.
+"Easy or hard" is decided by Leanroute's **trained router**, trained on 109k real prompts whose cheap-model answers GPT-4 graded: at the default setting about half of traffic goes to the cheap model and 94% of those answers were good enough ([how we measured](https://github.com/kdandu001-arch/leanroute/blob/main/eval/results.md)). **Streaming** works with the wrapper, and streamed answers are costed correctly.
 
 ```
 your code ─► leanroute ─┬─ blocked ............ $0
@@ -44,6 +44,14 @@ Everything else about the client is unchanged. Works with `OpenAI`, `AsyncOpenAI
 * `model="auto"` → guard + route.
 * Any real model name → guard only; your model is used ("pinned").
 * Blocked prompts raise `leanroute.Blocked` before any tokens are billed.
+* Streaming works as usual; the cost is recorded when the stream ends:
+
+```python
+stream = client.chat.completions.create(model="auto", messages=messages, stream=True)
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
+print(stream.leanroute.route)
+```
 
 ## 2. Any LLM, any framework: ask for a route
 
@@ -94,8 +102,10 @@ Use your provider's **current** prices; savings are only as accurate as those nu
 
 ```python
 from leanroute import Policy
-lr = Leanroute(policy=Policy(guard_mode="precise", detector_threshold=0.66, easy_max=1.2))
+lr = Leanroute(policy=Policy(guard_mode="precise", router="leanroute", router_threshold=0.107))
 ```
+
+`router_threshold` is the savings dial: lower = more cautious. On held-out data, 0.067 sent ~30% of traffic to the cheap model (96% of those answers good enough), 0.107 ~50% (94%), 0.165 ~70% (92%). `router="laya"` uses Laya's difficulty score instead.
 
 **Guard modes** (measured in [`eval/results.md`](https://github.com/kdandu001-arch/leanroute/blob/main/eval/results.md)):
 

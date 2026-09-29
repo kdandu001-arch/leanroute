@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "leanroute"
-version = "0.1.0"
+version = "0.2.0"
 description = "A toll gate in front of any LLM: blocks prompt injections, routes easy requests to a cheaper model, and tracks the savings."
 readme = "README.md"
 requires-python = ">=3.10"

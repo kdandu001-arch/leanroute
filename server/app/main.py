@@ -178,6 +178,15 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
         return {"injection": round(score, 5), "detector": getattr(get_gateway().guard, "name", "protectai"),
                 "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
+    @app.post("/v1/router", dependencies=[Depends(auth_public)])
+    def router(req: GuardRequest):
+        """P(the cheap model's answer won't be good enough) from Leanroute's trained router (used by the SDK)."""
+        if len(req.text) > MAX_CHARS:
+            raise HTTPException(413, f"Input longer than {MAX_CHARS} characters")
+        t0 = time.perf_counter()
+        return {"needs_strong": round(get_gateway().router.needs_strong(req.text), 5), "router": "leanroute",
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
+
     @app.post("/v1/chat/completions")
     def chat(body: Dict[str, Any], project: Optional[str] = Depends(auth_private)):
         gw = get_gateway()

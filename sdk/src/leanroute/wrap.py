@@ -31,6 +31,81 @@ def _usage(resp) -> tuple[int, int]:
     return int(g("prompt_tokens") or g("input_tokens") or 0), int(g("completion_tokens") or g("output_tokens") or 0)
 
 
+def _chunk_info(chunk) -> tuple[str, int, int]:
+    """(text, prompt tokens, completion tokens) carried by one streamed chunk or event, OpenAI or Anthropic."""
+    get = (lambda o, k: o.get(k) if isinstance(o, dict) else getattr(o, k, None))
+    text = ""
+    for choice in get(chunk, "choices") or []:                       # OpenAI-style chunk
+        delta = get(choice, "delta")
+        text += (get(delta, "content") if delta is not None else None) or ""
+    delta = get(chunk, "delta")                                      # Anthropic content_block_delta
+    if delta is not None and get(chunk, "type") == "content_block_delta":
+        text += get(delta, "text") or ""
+    usage = get(chunk, "usage")
+    message = get(chunk, "message")                                  # Anthropic message_start
+    if usage is None and message is not None:
+        usage = get(message, "usage")
+    pin, pout = _usage({"usage": usage}) if usage is not None else (0, 0)
+    return text, pin, pout
+
+
+class _Recorder:
+    """Passes a stream through unchanged and records its real cost when it ends."""
+
+    def __init__(self, stream, create, d, messages):
+        self._s, self._create, self._d, self._messages = stream, create, d, messages
+        self._text, self._pin, self._pout, self._done = [], 0, 0, False
+
+    def _see(self, chunk):
+        text, pin, pout = _chunk_info(chunk)
+        self._text.append(text)
+        self._pin, self._pout = max(self._pin, pin), max(self._pout, pout)
+        return chunk
+
+    def _finish(self):
+        if self._done:
+            return
+        self._done = True
+        pin = self._pin or max(1, sum(len(str(m.get("content", ""))) for m in self._messages or []) // 4)
+        pout = self._pout or max(1, len("".join(self._text)) // 4)   # no usage in the stream: estimate it
+        self._create.lr.stats.record(self._d, self._create.strong, pin, pout)
+
+    def __iter__(self):
+        try:
+            for chunk in self._s:
+                yield self._see(chunk)
+        finally:
+            self._finish()
+
+    async def __aiter__(self):
+        try:
+            async for chunk in self._s:
+                yield self._see(chunk)
+        finally:
+            self._finish()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self._finish()
+        if hasattr(self._s, "close"):
+            self._s.close()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        self._finish()
+        if hasattr(self._s, "close"):
+            r = self._s.close()
+            if inspect.isawaitable(r):
+                await r
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
 def _attach(resp, d: Decision):
     try:
         setattr(resp, "leanroute", d)
@@ -58,7 +133,9 @@ class _Create:
         kwargs = dict(kwargs, model=d.model or self.strong)
         return d, kwargs
 
-    def _done(self, d, resp):
+    def _done(self, d, resp, kwargs=None):
+        if kwargs and kwargs.get("stream"):
+            return _attach(_Recorder(resp, self, d, kwargs.get("messages")), d)
         pin, pout = _usage(resp)
         self.lr.stats.record(d, self.strong, pin, pout)
         return _attach(resp, d)
@@ -69,13 +146,13 @@ class _Create:
         d, kw = self._plan(kwargs)
         if kw is None:
             return None
-        return self._done(d, self.original(*args, **kw))
+        return self._done(d, self.original(*args, **kw), kw)
 
     async def _acall(self, *args, **kwargs):
         d, kw = await asyncio.to_thread(self._plan, kwargs)
         if kw is None:
             return None
-        return self._done(d, await self.original(*args, **kw))
+        return self._done(d, await self.original(*args, **kw), kw)
 
 
 class _Proxy:
