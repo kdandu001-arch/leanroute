@@ -1,15 +1,52 @@
 # Leanroute
 
-**Fast, calibrated decisions for AI apps, powered by [Laya](https://huggingface.co/convaiinnovations/laya).** Website: **[leanroute.online](https://leanroute.online)**
+**An open-source toll gate in front of your LLM.** It blocks prompt injections, sends each request to a cheap model when the cheap model's answer will be good enough, and proves the savings on your own dashboard.
 
-An LLM is an expensive expert. Many requests an AI app sends it are simple decisions: *spam or not? which team? safe to send? cheap model or big model?* Leanroute puts Laya, a small open-source decision model, in front of your LLM so those get answered in milliseconds for $0, and only the hard questions reach the paid model.
+[![CI](https://github.com/kdandu001-arch/leanroute/actions/workflows/ci.yml/badge.svg)](https://github.com/kdandu001-arch/leanroute/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/leanroute)](https://pypi.org/project/leanroute/)
+[![Python](https://img.shields.io/pypi/pyversions/leanroute)](https://pypi.org/project/leanroute/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
+Website: **[leanroute.online](https://leanroute.online)** · Results: **[eval/results.md](eval/results.md)** · Changelog: **[CHANGELOG.md](CHANGELOG.md)**
+
+## Quickstart
+
+```bash
+pip install "leanroute[local]"
+```
+
+```python
+from openai import OpenAI
+from leanroute import Leanroute
+
+client = Leanroute().wrap(OpenAI(), cheap="gpt-4o-mini", strong="gpt-4o")
+r = client.chat.completions.create(model="auto", messages=[{"role": "user", "content": "Capital of Australia?"}])
+print(r.choices[0].message.content, r.leanroute.route)   # -> Canberra  cheap
+```
+
+Or run it as an OpenAI-compatible server and change one line in any app: `base_url="http://localhost:8000/v1"`, `model="auto"` ([server setup](#run-it-on-your-mac)).
+
+![Leanroute savings dashboard (sample data)](docs/images/dashboard.png)
+<sub>The savings dashboard, shown with sample data.</sub>
+
+## Why Leanroute
+
+| | What it does | Measured ([how](eval/results.md)) |
+|---|---|---|
+| **Routes by answer quality** | A router trained on 109k real prompts with GPT-4-graded answers predicts whether a cheap model's answer will be good enough | With half of traffic sent to the cheap model, **94%** of those answers were good enough (89% with Laya's difficulty score) |
+| **Guards without blocking users** | An open-source prompt-injection detector stops attacks before any tokens are billed | **0.4%** of normal requests and **0%** of coding requests wrongly blocked |
+| **Proves the savings** | A sample of cheap answers is re-checked against the strong model; the check's cost is subtracted from savings | Pass rate on your dashboard |
+| **Production basics** | Streaming, retries, cheap→strong fallback, response cache, per-project budgets and rate limits | 54 automated tests |
+| **Yours** | Apache 2.0, self-hosted, prompts never stored | |
 
 ```
-Your app ─► Leanroute (Laya) ─┬─► answered by Laya ........ $0
-                              ├─► cheap model (easy) ...... $
-                              ├─► strong model (hard) ..... $$$
-                              └─► blocked (jailbreak) ..... $0
+your app ─► Leanroute ─┬─► blocked (prompt injection) ... $0
+                       ├─► answered from cache .......... $0
+                       ├─► cheap model .................. $
+                       └─► strong model ................. $$$
 ```
+
+Also: [Laya](https://huggingface.co/convaiinnovations/laya) answers simple decisions directly ("spam?", "which team?", "hot lead?") with a probability and no LLM at all, through `/v1/decide` or `lr.check()`.
 
 ## What's in the repo
 
