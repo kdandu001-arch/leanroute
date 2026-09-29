@@ -9,8 +9,6 @@
 
 Website: **[leanroute.online](https://leanroute.online)** · Results: **[eval/results.md](eval/results.md)** · Changelog: **[CHANGELOG.md](CHANGELOG.md)**
 
-[![Watch the 1-minute explainer](docs/images/video-poster.jpg)](docs/video/leanroute-explainer.mp4)
-
 ## Quickstart
 
 ```bash
