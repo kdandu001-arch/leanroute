@@ -1,6 +1,6 @@
 # Leanroute
 
-**Fast, calibrated decisions for AI apps, powered by [Laya](https://huggingface.co/convaiinnovations/laya).**
+**Fast, calibrated decisions for AI apps, powered by [Laya](https://huggingface.co/convaiinnovations/laya).** Website: **[leanroute.online](https://leanroute.online)**
 
 An LLM is an expensive expert. Many requests an AI app sends it are simple decisions: *spam or not? which team? safe to send? cheap model or big model?* Leanroute puts Laya, a small open-source decision model, in front of your LLM so those get answered in milliseconds for $0, and only the hard questions reach the paid model.
 
