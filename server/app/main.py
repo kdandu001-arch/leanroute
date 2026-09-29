@@ -50,6 +50,17 @@ def _api_keys() -> Dict[str, str]:
     return keys
 
 
+def client_ip(request: Request) -> str:
+    """The visitor's IP. Behind a reverse proxy (e.g. Hugging Face Spaces) every request comes from the proxy,
+    so with TRUST_PROXY=true the first X-Forwarded-For address is used instead. Only enable it behind a proxy
+    that sets that header, since clients can forge it otherwise."""
+    if os.getenv("TRUST_PROXY", "false").lower() == "true":
+        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if forwarded:
+            return forwarded
+    return request.client.host if request.client else "anon"
+
+
 class RateLimiter:
     """Per-IP sliding window for anonymous Playground traffic."""
 
@@ -113,7 +124,7 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
         if token in keys:
             return keys[token]
         if allow_public and public_playground and not token:
-            limiter.check(request.client.host if request.client else "anon")
+            limiter.check(client_ip(request))
             return None
         raise HTTPException(401, "Missing or invalid API key")
 

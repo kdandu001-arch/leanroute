@@ -335,3 +335,14 @@ def test_leanroute_router_decides_and_laya_vetoes_sensitive():
     assert gw(0.05, sensitive=0.9).handle(msg)["leanroute"]["route"] == "strong"
     with pytest.raises(ValueError):
         GatewayConfig(router="magic")
+
+
+def test_playground_rate_limit_per_visitor_behind_proxy(monkeypatch):
+    monkeypatch.setenv("LEANROUTE_API_KEYS", "k1")
+    monkeypatch.setenv("PLAYGROUND_RPM", "2")
+    monkeypatch.setenv("TRUST_PROXY", "true")
+    c = TestClient(create_app(engine=MockEngine()))
+    q = {"text": "hi", "questions": {"q": {"type": "noul", "instructions": "spam?"}}}
+    post = lambda ip: c.post("/v1/decide", json=q, headers={"X-Forwarded-For": f"{ip}, 10.0.0.1"}).status_code
+    assert [post("1.1.1.1"), post("1.1.1.1"), post("1.1.1.1")] == [200, 200, 429]
+    assert post("2.2.2.2") == 200          # a different visitor has their own limit
