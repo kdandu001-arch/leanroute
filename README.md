@@ -151,6 +151,7 @@ Open **http://localhost:8000/dashboard** to see what the gateway saved you: mone
 * Usage is saved to a small SQLite file (`server/data/leanroute.db`, or `LEANROUTE_DB`), so numbers survive restarts. **Only counts and costs are stored, never prompt text.**
 * Give each customer their own dashboard with project-named keys: `LEANROUTE_API_KEYS=acme:lr_abc,beta:lr_def`. Each key sees only its own project.
 * The same data is available as JSON: `GET /v1/usage?days=30` (and all-time totals at `GET /v1/stats`).
+* Using only the Python package, no server? Run **`leanroute dashboard`**: the same page, built from the usage the package saves on your computer (`~/.leanroute/usage.db`).
 
 Works with any OpenAI-compatible upstream (OpenAI, OpenRouter, Groq, Together, a local Ollama at `http://localhost:11434/v1`). **Set the price variables in `.env` to your provider's current prices**; savings are only as accurate as those numbers.
 

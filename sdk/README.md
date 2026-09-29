@@ -98,6 +98,17 @@ lr.stats.summary()
 
 Use your provider's **current** prices; savings are only as accurate as those numbers.
 
+## Dashboard: `leanroute dashboard`
+
+Every request is also saved to a small file on your own computer (`~/.leanroute/usage.db`): route, model, token counts and cost. **Never prompt text**, and nothing is sent anywhere. To see it:
+
+```bash
+leanroute dashboard        # opens http://127.0.0.1:8765/dashboard in your browser
+leanroute stats            # the same totals as JSON, for scripts
+```
+
+It's the same dashboard as the Leanroute server's: money saved, routing split, attacks blocked, a per-day chart. Dollar amounts need `prices=`; without them you still see requests, routes and blocks. Options: `--port`, `--db`, `--no-browser`. Group apps with `Leanroute(project="shop")`; turn saving off with `Leanroute(record_usage=False)` or `LEANROUTE_RECORD=0`, or move the file with `LEANROUTE_DB`.
+
 ## Tuning
 
 ```python

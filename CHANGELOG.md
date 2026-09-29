@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 (2026-09-29)
+
+**Python package (`pip install leanroute`)**
+- `leanroute dashboard`: the savings dashboard without running a server. The package now saves each request's route, model, tokens and cost (never prompt text) to `~/.leanroute/usage.db`, and the command opens the same dashboard page as the server, locally. Nothing extra to install.
+- `leanroute stats` prints the totals as JSON.
+- `Leanroute(project=...)` groups usage; `record_usage=False` or `LEANROUTE_RECORD=0` turns saving off; `LEANROUTE_DB` moves the file.
+
+**Dashboard**
+- Handles usage without prices: shows requests, routes and blocks, and asks for `prices=` instead of showing $0.
+
 ## 0.2.0 (2026-09-29)
 
 **Python package (`pip install leanroute`)**

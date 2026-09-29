@@ -1,6 +1,8 @@
 """Leanroute: a decision layer that sits in front of any LLM."""
 from __future__ import annotations
 
+import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -8,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .engines import Engine, LocalEngine, RemoteEngine
 from .questions import GUARD_QUESTIONS, ROUTER_QUESTIONS, yes_no
+from .usage import LocalUsage
 
 Messages = List[Dict[str, Any]]
 
@@ -88,8 +91,9 @@ class Policy:
 class Stats:
     """Counts routes and (if you give prices) estimates money saved vs. always using the strong model."""
 
-    def __init__(self, prices: Optional[Dict[str, Tuple[float, float]]] = None):
+    def __init__(self, prices: Optional[Dict[str, Tuple[float, float]]] = None, store=None, project: str = "default"):
         self.prices = prices or {}   # model -> (USD per 1M input tokens, USD per 1M output tokens)
+        self.store, self.project = store, project   # store: LocalUsage for `leanroute dashboard`, or None
         self._lock = threading.Lock()
         self.routes: Dict[str, int] = {}
         self.actual_usd = 0.0
@@ -109,6 +113,14 @@ class Stats:
             if base is not None and act is not None:
                 self.baseline_usd += base
                 self.actual_usd += act
+        if self.store is not None:
+            try:
+                priced = base is not None and act is not None
+                self.store.record(project=self.project, route=d.route, model=d.model, prompt_tokens=pin,
+                                  completion_tokens=pout, cost_usd=act if priced else None,
+                                  baseline_usd=base if priced else None, decision_ms=d.decision_ms)
+            except Exception:  # saving usage must never break the app
+                logging.getLogger("leanroute").debug("could not save usage", exc_info=True)
 
     def summary(self) -> Dict[str, Any]:
         n = sum(self.routes.values())
@@ -142,6 +154,7 @@ class Leanroute:
     """
     lr = Leanroute()                                   # Laya in-process  (pip install "leanroute[local]")
     lr = Leanroute(api_url="http://localhost:8000")    # or a Leanroute server
+    Usage is saved locally (counts and costs, never prompts); run `leanroute dashboard` to see it.
 
     lr.check("FREE crypto!!!", "Is this spam?")        -> 0.94
     lr.decide(text, {"team": choice("Which team?", ["billing", "tech", "sales"])})
@@ -152,7 +165,8 @@ class Leanroute:
     def __init__(self, api_url: Optional[str] = None, api_key: Optional[str] = None,
                  engine: Optional[Engine] = None, policy: Optional[Policy] = None,
                  prices: Optional[Dict[str, Tuple[float, float]]] = None,
-                 fail_open: bool = True, max_chars: int = 4000, **local_kwargs):
+                 fail_open: bool = True, max_chars: int = 4000, project: str = "default",
+                 record_usage: Optional[bool] = None, **local_kwargs):
         if engine is not None:
             self.engine = engine
         elif api_url:
@@ -160,7 +174,15 @@ class Leanroute:
         else:
             self.engine = LocalEngine(**local_kwargs)
         self.policy = policy or Policy()
-        self.stats = Stats(prices)
+        if record_usage is None:  # default on; LEANROUTE_RECORD=0 turns it off everywhere
+            record_usage = os.getenv("LEANROUTE_RECORD", "1") != "0"
+        store = None
+        if record_usage:
+            try:
+                store = LocalUsage()
+            except Exception:
+                logging.getLogger("leanroute").debug("usage log unavailable", exc_info=True)
+        self.stats = Stats(prices, store=store, project=project)
         self.fail_open = fail_open
         self.max_chars = max_chars
         self.last: Optional[Decision] = None
