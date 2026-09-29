@@ -632,7 +632,7 @@ function show(res, demo){
     return `<div class="ans"><div class="ah"><span>${esc(label)}</span><b>${esc(pretty(top))} · ${pct(tp)}</b></div><div class="bar"><i style="width:${Math.round(tp*100)}%;background:${color("choice")}"></i></div><div class="alt">${rest}</div></div>`;
   }).join("");
   html += verdict(a);
-  if(demo) html += `<div class="note">Demo mode: illustrative sample output. Connect the API (see Docs) to run Laya on your own text.</div>`;
+  if(demo) html += `<div class="note">Sample output. To run it on your own text: <code>pip install leanroute</code>, or <a href="#developers">self-host in one command</a>.</div>`;
   $("#out").innerHTML = html;
   meta(res, demo);
 }
@@ -657,7 +657,7 @@ async function run(){
   if(!live){
     const untouched = DEMO[current] && $("#input").value === TPL[current].sample;
     if(untouched) return show(DEMO[current], true);
-    $("#out").innerHTML = `<div class="note">Demo mode can only replay the sample inputs. To run Laya on your own text, set <code>window.LEANROUTE_API</code> to your server URL (see Docs) or self-host with Docker.</div>`;
+    $("#out").innerHTML = `<div class="note">This live site shows sample answers only. To try your own text, run Leanroute yourself: <code>pip install leanroute</code>, or <a href="#developers">self-host in one command</a> and open <code>http://localhost:8000</code>, where this playground runs live.</div>`;
     return meta();
   }
   btn.disabled = true; btn.textContent = "Deciding…";
@@ -672,7 +672,7 @@ async function run(){
   }finally{ btn.disabled = false; btn.textContent = "Run decision →"; }
 }
 async function connect(){
-  if(!API) return;
+  if(!API || /(^|\.)leanroute\.online$/.test(location.hostname) && !window.LEANROUTE_API) return;  // static site: demo mode
   try{
     const r = await fetch(API + "/v1/templates"); if(!r.ok) return;
     const t = await r.json();
