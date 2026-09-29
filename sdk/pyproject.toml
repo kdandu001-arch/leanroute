@@ -5,16 +5,17 @@ build-backend = "hatchling.build"
 [project]
 name = "leanroute"
 version = "0.1.0"
-description = "Put a fast, calibrated decision layer (Laya) in front of any LLM: guard, route and cut costs."
+description = "A toll gate in front of any LLM: blocks prompt injections, routes easy requests to a cheaper model, and tracks the savings."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [{ name = "Kushal" }]
-keywords = ["llm", "router", "guardrails", "laya", "cost", "openai", "classification"]
+keywords = ["llm", "llm-router", "guardrails", "prompt-injection", "cost", "openai", "anthropic", "laya"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: Apache Software License",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Development Status :: 3 - Alpha",
 ]
 dependencies = ["httpx>=0.27"]
 
@@ -23,7 +24,10 @@ local = ["laya>=0.3.6"]          # run Laya in-process (downloads the model)
 dev = ["pytest>=8"]
 
 [project.urls]
-Homepage = "https://github.com/kdandu001-arch/leanroute"
+Homepage = "https://leanroute.online"
+Source = "https://github.com/kdandu001-arch/leanroute"
+Documentation = "https://github.com/kdandu001-arch/leanroute/blob/main/sdk/README.md"
+Issues = "https://github.com/kdandu001-arch/leanroute/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/leanroute"]

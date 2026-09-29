@@ -1,12 +1,14 @@
 # leanroute
 
-**Put a fast, calibrated decision layer in front of any LLM.** Powered by [Laya](https://huggingface.co/convaiinnovations/laya) (Apache 2.0).
+**A toll gate in front of any LLM.** Website: [leanroute.online](https://leanroute.online) · Source: [GitHub](https://github.com/kdandu001-arch/leanroute)
 
-Before your app pays an LLM, Leanroute asks Laya (~35 ms on GPU, $0 per call) three things:
+Before your app pays an LLM, Leanroute checks three things, locally and for $0 per call:
 
-1. **Is this an attack?** Jailbreak / prompt injection → blocked, no LLM call.
-2. **How hard is it?** Easy → your cheap model. Hard, sensitive or unsure → your strong model.
-3. **Anything else you ask**, e.g. "is this spam?", "which team?", "hot lead?" → answered by Laya with a probability, no LLM at all.
+1. **Is this an attack?** Prompt injections are blocked by an open-source detector before any LLM call.
+2. **How hard is it?** Easy → your cheap model. Hard or sensitive → your strong model.
+3. **Anything else you ask**, e.g. "is this spam?", "which team?", "hot lead?" → answered by [Laya](https://huggingface.co/convaiinnovations/laya) (Apache 2.0) with a probability, no LLM at all.
+
+> **Version 0.1 note:** this package decides "easy or hard" with Laya's difficulty score. The Leanroute *server* uses a trained router that was measurably better on real graded answers ([results](https://github.com/kdandu001-arch/leanroute/blob/main/eval/results.md)); bringing it to this package is planned for 0.2.
 
 ```
 your code ─► leanroute ─┬─ blocked ............ $0
@@ -95,7 +97,7 @@ from leanroute import Policy
 lr = Leanroute(policy=Policy(guard_mode="precise", detector_threshold=0.66, easy_max=1.2))
 ```
 
-**Guard modes** (measured in [`eval/results.md`](../eval/results.md)):
+**Guard modes** (measured in [`eval/results.md`](https://github.com/kdandu001-arch/leanroute/blob/main/eval/results.md)):
 
 | `guard_mode` | What blocks a prompt |
 |---|---|

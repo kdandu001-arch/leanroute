@@ -37,7 +37,7 @@ r = client.chat.completions.create(model="auto", messages=[{"role": "user", "con
 print(r.leanroute.route)                               # "cheap" | "strong"   (blocked prompts raise leanroute.Blocked)
 ```
 
-Full SDK docs: [`sdk/README.md`](sdk/README.md). Until it's on PyPI, install from the repo: `pip install -e ./sdk`.
+Full SDK docs: [`sdk/README.md`](sdk/README.md). On PyPI: [pypi.org/project/leanroute](https://pypi.org/project/leanroute/).
 
 ## Run it on your Mac
 
