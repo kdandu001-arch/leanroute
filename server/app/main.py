@@ -251,6 +251,9 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
     def dashboard():
         return page("dashboard.html")
 
+    for asset in ("favicon.svg", "og.png", "robots.txt", "sitemap.xml"):  # fixed list, never user-chosen paths
+        app.add_api_route(f"/{asset}", lambda asset=asset: page(asset), include_in_schema=False)
+
     return app
 
 

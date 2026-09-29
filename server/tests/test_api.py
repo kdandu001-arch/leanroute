@@ -438,3 +438,11 @@ def test_router_endpoint_returns_trained_router_score():
     c = TestClient(create_app(engine=gw.engine, gateway=gw))
     r = c.post("/v1/router", json={"text": "Explain TCP"})
     assert r.status_code == 200 and r.json()["needs_strong"] == 0.42
+
+
+def test_site_assets_served_from_fixed_list_only():
+    c = TestClient(create_app(engine=MockEngine()))
+    assert c.get("/favicon.svg").status_code == 200 and "svg" in c.get("/favicon.svg").headers["content-type"]
+    assert c.get("/og.png").headers["content-type"] == "image/png"
+    assert c.get("/robots.txt").status_code == 200
+    assert c.get("/../.env").status_code == 404 and c.get("/app/main.py").status_code == 404
