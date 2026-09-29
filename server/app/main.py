@@ -11,11 +11,11 @@ from typing import Any, Dict, Optional, Union
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .engine import build_engine
-from .gateway import Gateway, GatewayConfig
+from .gateway import Gateway, GatewayConfig, LimitExceeded, route_headers
 from .templates import TEMPLATES
 from .cache import ResponseCache
 from .usage import UsageStore
@@ -180,10 +180,15 @@ def create_app(engine=None, gateway: Optional[Gateway] = None, store: Optional[U
 
     @app.post("/v1/chat/completions")
     def chat(body: Dict[str, Any], project: Optional[str] = Depends(auth_private)):
-        if body.get("stream"):
-            raise HTTPException(400, "Streaming is not supported yet; send stream=false")
+        gw = get_gateway()
         try:
-            return get_gateway().handle(body, project=project or "default")
+            if body.get("stream"):
+                headers, events = gw.handle_stream(body, project=project or "default")
+                return StreamingResponse(events, media_type="text/event-stream", headers=headers)
+            out = gw.handle(body, project=project or "default")
+            return JSONResponse(out, headers=route_headers(out["leanroute"]))
+        except LimitExceeded as e:
+            raise HTTPException(429, str(e))
         except httpx.HTTPStatusError as e:
             raise HTTPException(e.response.status_code, f"Upstream LLM error: {e.response.text[:300]}")
         except httpx.HTTPError as e:

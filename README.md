@@ -93,7 +93,11 @@ Drop-in OpenAI-compatible endpoint. Send `model: "auto"` and Leanroute:
 3. sends requests the cheap model can handle, and that aren't sensitive, to `CHEAP_MODEL`,
 4. sends everything else to `STRONG_MODEL`.
 
-The response includes a `leanroute` block (`route`, `reason`, `cost_usd`, `saved_usd`). `GET /v1/stats` shows totals and % saved versus sending everything to the strong model. Pin a specific model name to skip routing and keep only the guardrail. Streaming isn't supported yet.
+The response includes a `leanroute` block (`route`, `reason`, `cost_usd`, `saved_usd`) and `X-Leanroute-Route` / `-Model` / `-Reason` headers. `GET /v1/stats` shows totals and % saved versus sending everything to the strong model. Pin a specific model name to skip routing and keep only the guardrail.
+
+* **Streaming** (`stream: true`) passes the provider's answer through as it's written; cost is recorded when the stream ends.
+* **Retries and fallback:** provider overload (429), server errors (5xx) and network failures are retried; if the cheap model still fails, the request goes to the strong model instead of failing (for streams, before the first byte).
+* **Budgets and rate limits per project:** `LEANROUTE_BUDGETS=acme:50` caps a project's monthly spend and `PROJECT_RPM` its requests per minute. Both are checked before the LLM is called, so an over-budget request costs nothing (HTTP 429).
 
 ### Response cache
 
@@ -145,7 +149,8 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 
 - [ ] Hosted Leanroute Pro ($19/month): no server to run
 - [ ] API keys + usage in Supabase, Stripe billing
-- [ ] Streaming in the gateway
+- [x] Streaming in the gateway
+- [x] Retries, fallback to the strong model, per-project budgets and rate limits
 - [x] Response cache for repeated prompts
 - [x] Quality check: verify a sample of cheap answers against the strong model
 - [ ] Fine-tune Studio: upload CSV → custom calibrated model

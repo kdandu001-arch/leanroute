@@ -31,11 +31,29 @@ class FixedEngine:
         }}
 
 
-def fake_upstream(seen, judge_says="YES"):
+def sse(parts, usage=None):
+    import json
+    chunks = [{"id": "s", "object": "chat.completion.chunk", "model": "m",
+               "choices": [{"index": 0, "delta": {"content": p}, "finish_reason": None}]} for p in parts]
+    if usage:
+        chunks.append({"id": "s", "object": "chat.completion.chunk", "model": "m", "choices": [], "usage": usage})
+    return "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+
+
+def fake_upstream(seen, judge_says="YES", fail=None):
+    """fail: {model: [status, status, ...]} statuses returned (in order) before that model succeeds."""
+    fail = {k: list(v) for k, v in (fail or {}).items()}
+
     def handler(request: httpx.Request):
         import json
         body = json.loads(request.content)
         seen.append(body)
+        if fail.get(body["model"]):
+            return httpx.Response(fail[body["model"]].pop(0), json={"error": "upstream trouble"})
+        if body.get("stream"):
+            usage = {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500} \
+                if (body.get("stream_options") or {}).get("include_usage") else None
+            return httpx.Response(200, text=sse(["Hel", "lo"], usage), headers={"content-type": "text/event-stream"})
         judging = "Reply with only YES or NO" in str(body["messages"])
         return httpx.Response(200, json={
             "id": "x", "object": "chat.completion", "model": body["model"],
@@ -60,7 +78,9 @@ def make(engine, seen=None, store=None, cache=None, guard=None, **cfg):
     seen = [] if seen is None else seen
     cfg.setdefault("guard_mode", "laya")  # most tests exercise Laya's guard scores via FixedEngine
     cfg.setdefault("router", "laya")      # ...and Laya's difficulty score
-    gw = Gateway(engine, GatewayConfig(upstream_base_url="http://up/v1", **cfg), client=fake_upstream(seen),
+    cfg.setdefault("retry_backoff", 0)    # no real waiting between retries in tests
+    fail = cfg.pop("fail", None)
+    gw = Gateway(engine, GatewayConfig(upstream_base_url="http://up/v1", **cfg), client=fake_upstream(seen, fail=fail),
                  store=store, cache=cache, guard=guard or FakeGuard())
     return TestClient(create_app(engine=engine, gateway=gw)), seen
 
@@ -241,10 +261,73 @@ def test_usage_endpoint_shape_and_no_prompt_text_stored():
     assert rows and not any("4111" in str(v) for row in rows for v in row)
 
 
-def test_stream_rejected():
-    c, _ = make(FixedEngine())
-    r = c.post("/v1/chat/completions", json={"model": "auto", "stream": True, "messages": [{"role": "user", "content": "x"}]})
-    assert r.status_code == 400
+def test_streaming_passes_through_and_records_cost():
+    c, seen = make(FixedEngine(difficulty=0.3))
+    r = c.post("/v1/chat/completions", json={"model": "auto", "stream": True, "messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+    assert r.headers["x-leanroute-route"] == "cheap" and r.headers["x-leanroute-model"] == "gpt-4o-mini"
+    assert '"Hel"' in r.text and '"lo"' in r.text and r.text.rstrip().endswith("data: [DONE]")
+    assert '"usage"' not in r.text                                    # caller didn't ask for the usage chunk
+    assert seen[-1]["stream"] is True and seen[-1]["stream_options"]["include_usage"] is True
+    s = c.get("/v1/stats").json()
+    assert s["requests"] == 1 and s["actual_cost_usd"] > 0 and s["saved_usd"] > 0
+
+
+def test_streaming_keeps_usage_when_asked_and_streams_blocked_and_cached():
+    c, _ = make(FixedEngine(difficulty=0.3))
+    r = c.post("/v1/chat/completions", json={"model": "auto", "stream": True, "stream_options": {"include_usage": True},
+                                             "messages": [{"role": "user", "content": "hi"}]})
+    assert '"usage"' in r.text
+    b, seen = make(FixedEngine(jailbreak=0.99, injection=0.99))
+    r = b.post("/v1/chat/completions", json={"model": "auto", "stream": True, "messages": [{"role": "user", "content": "x"}]})
+    assert r.headers["x-leanroute-route"] == "blocked" and "blocked by Leanroute" in r.text and "[DONE]" in r.text and seen == []
+    k, seen = make(FixedEngine(difficulty=0.3), cache=ResponseCache(ttl_seconds=3600, path=":memory:"))
+    chat(k, "hi")                                                      # fills the cache (non-streaming)
+    r = k.post("/v1/chat/completions", json={"model": "auto", "stream": True, "messages": [{"role": "user", "content": "hi"}]})
+    assert r.headers["x-leanroute-route"] == "cached" and len(seen) == 1 and "[DONE]" in r.text
+
+
+def test_retries_provider_errors_then_succeeds():
+    c, seen = make(FixedEngine(difficulty=0.3), fail={"gpt-4o-mini": [503, 429]})
+    r = chat(c, "hi")
+    assert r.status_code == 200 and r.json()["leanroute"]["route"] == "cheap" and len(seen) == 3
+
+
+def test_falls_back_to_strong_model_when_cheap_fails():
+    c, seen = make(FixedEngine(difficulty=0.3), fail={"gpt-4o-mini": [500, 500, 500]})
+    r = chat(c, "hi")
+    assert r.status_code == 200
+    m = r.json()["leanroute"]
+    assert m["route"] == "strong" and m["model"] == "gpt-4o" and "fallback" in m["reason"]
+    assert [b["model"] for b in seen] == ["gpt-4o-mini"] * 3 + ["gpt-4o"]
+    s, seen = make(FixedEngine(difficulty=0.3), fail={"gpt-4o-mini": [500, 500, 500]})
+    r = s.post("/v1/chat/completions", json={"model": "auto", "stream": True, "messages": [{"role": "user", "content": "hi"}]})
+    assert r.headers["x-leanroute-route"] == "strong" and r.headers["x-leanroute-model"] == "gpt-4o"   # before first byte
+
+
+def test_no_fallback_for_bad_requests_or_strong_failures():
+    c, seen = make(FixedEngine(difficulty=0.3), fail={"gpt-4o-mini": [400]})
+    assert chat(c, "hi").status_code == 400 and len(seen) == 1
+    c2, _ = make(FixedEngine(difficulty=2.8), fail={"gpt-4o": [500, 500, 500]})
+    assert chat(c2, "hard").status_code == 500
+
+
+def test_monthly_budget_blocks_before_the_llm_is_called(monkeypatch):
+    monkeypatch.setenv("LEANROUTE_API_KEYS", "acme:k1,beta:k2")
+    c, seen = make(FixedEngine(difficulty=2.8), budgets={"acme": 0.01})   # each strong call costs $0.0075
+    ask = lambda key: c.post("/v1/chat/completions", headers={"Authorization": f"Bearer {key}"},
+                             json={"model": "auto", "messages": [{"role": "user", "content": "hi"}]})
+    assert ask("k1").status_code == 200 and ask("k1").status_code == 200
+    r = ask("k1")
+    assert r.status_code == 429 and "Monthly budget of $0.01" in r.json()["detail"] and len(seen) == 2
+    assert ask("k2").status_code == 200                                  # other projects are unaffected
+
+
+def test_project_rate_limit():
+    c, seen = make(FixedEngine(difficulty=0.3), project_rpm=2)
+    assert [chat(c, "hi").status_code for _ in range(3)] == [200, 200, 429] and len(seen) == 2
+    r = chat(c, "hi")
+    assert "Rate limit reached" in r.json()["detail"]
 
 
 def test_cache_answers_repeats_for_free(monkeypatch):

@@ -8,18 +8,23 @@ For every chat request it:
     Laya whether the request is sensitive,
   * sends the rest to a cheap model and hard or sensitive requests to the strong model,
   * records what that cost versus sending everything to the strong model,
-  * optionally double-checks a sample of cheap answers against the strong model (QUALITY_CHECK_RATE).
+  * optionally double-checks a sample of cheap answers against the strong model (QUALITY_CHECK_RATE),
+  * streams answers, retries provider errors, falls back from the cheap to the strong model, and enforces
+    per-project rate limits and monthly budgets before any money is spent.
 """
 from __future__ import annotations
 
+import calendar
+import json
 import logging
 import os
 import random
 import re
 import threading
 import time
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import httpx
 
@@ -70,12 +75,80 @@ class GatewayConfig:
     timeout_s: float = field(default_factory=lambda: _f("UPSTREAM_TIMEOUT", 120))
     # Share of cheap-routed requests to double-check against the strong model (0 = off, 0.05 = 5%).
     quality_rate: float = field(default_factory=lambda: _f("QUALITY_CHECK_RATE", 0.0))
+    # Retries for provider overload (429), server errors (5xx) and network failures, with exponential backoff.
+    retries: int = field(default_factory=lambda: int(_f("UPSTREAM_RETRIES", 2)))
+    retry_backoff: float = field(default_factory=lambda: _f("UPSTREAM_RETRY_BACKOFF", 0.5))
+    # Per-project limits, enforced before the LLM is called. PROJECT_RPM: requests per minute (0 = off).
+    # LEANROUTE_BUDGETS: monthly USD caps, e.g. "acme:50,beta:10"; BUDGET_MONTHLY_USD applies to other projects.
+    project_rpm: int = field(default_factory=lambda: int(_f("PROJECT_RPM", 0)))
+    budgets: Dict[str, float] = field(default_factory=lambda: parse_budgets(os.getenv("LEANROUTE_BUDGETS", "")))
+    default_budget: float = field(default_factory=lambda: _f("BUDGET_MONTHLY_USD", 0.0))
+
+    def budget_for(self, project: str) -> Optional[float]:
+        b = self.budgets.get(project, self.default_budget)
+        return b if b and b > 0 else None
 
     def __post_init__(self):
         if self.guard_mode not in ("precise", "broad", "laya", "off"):
             raise ValueError(f"GUARD_MODE must be precise, broad, laya or off (got {self.guard_mode!r})")
         if self.router not in ("leanroute", "laya"):
             raise ValueError(f"ROUTER must be leanroute or laya (got {self.router!r})")
+
+
+class LimitExceeded(Exception):
+    """A project hit its rate limit or monthly budget; answered with HTTP 429 before any LLM call."""
+
+
+def parse_budgets(spec: str) -> Dict[str, float]:
+    out = {}
+    for entry in spec.split(","):
+        name, sep, amount = entry.strip().partition(":")
+        if sep:
+            try:
+                out[name.strip()] = float(amount)
+            except ValueError:
+                raise ValueError(f"LEANROUTE_BUDGETS entry {entry!r} must look like project:amount")
+    return out
+
+
+class SlidingWindow:
+    def __init__(self):
+        self._hits: Dict[str, deque] = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def allow(self, key: str, per_minute: int) -> bool:
+        now = time.time()
+        with self._lock:
+            q = self._hits[key]
+            while q and now - q[0] > 60:
+                q.popleft()
+            if len(q) >= per_minute:
+                return False
+            q.append(now)
+            return True
+
+
+def route_headers(meta: Dict[str, Any]) -> Dict[str, str]:
+    """The routing decision as response headers, so streaming clients can see it too."""
+    def clean(v):
+        return str(v).encode("ascii", "replace").decode()[:200]
+    h = {"X-Leanroute-Route": clean(meta.get("route")), "X-Leanroute-Reason": clean(meta.get("reason"))}
+    if meta.get("model"):
+        h["X-Leanroute-Model"] = clean(meta["model"])
+    return h
+
+
+def sse_from_response(resp: Dict[str, Any]) -> Iterator[str]:
+    """Turn a complete (cached or blocked) chat response into a server-sent-event stream."""
+    choice = (resp.get("choices") or [{}])[0]
+    base = {"id": resp.get("id", "leanroute"), "object": "chat.completion.chunk",
+            "created": resp.get("created", int(time.time())), "model": resp.get("model")}
+    first = dict(base, choices=[{"index": 0, "delta": {"role": "assistant", "content": (choice.get("message") or {}).get("content", "")},
+                                 "finish_reason": None}], leanroute=resp.get("leanroute"))
+    last = dict(base, choices=[{"index": 0, "delta": {}, "finish_reason": choice.get("finish_reason", "stop")}])
+    for chunk in (first, last):
+        yield f"data: {json.dumps(chunk)}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 # Asked in two separate Laya passes, as Laya's own presets are meant to be used. Mixing them in one
@@ -167,6 +240,7 @@ class Gateway:
         self.router = router or LearnedRouter()  # used when ROUTER=leanroute; loads on first use
         self.client = client or httpx.Client(timeout=self.cfg.timeout_s)
         self._submit = lambda fn, *args: threading.Thread(target=fn, args=args, daemon=True).start()
+        self._project_limiter = SlidingWindow()
 
     def check_guard(self, text: str) -> Optional[str]:
         """Returns the reason a request is blocked, or None if it may pass."""
@@ -183,8 +257,10 @@ class Gateway:
                 return f"laya: jailbreak={jb:.2f} injection={inj:.2f}"
         return None
 
-    def handle(self, body: Dict[str, Any], project: str = "default") -> Dict[str, Any]:
-        key = request_key(project, body)
+    def _plan(self, body: Dict[str, Any], project: str) -> Dict[str, Any]:
+        """Cache, guard, routing, budget and rate limit. Returns {"final": response} when no LLM call is needed
+        (cached or blocked), otherwise what to call: model, tier, meta, cache key and timing."""
+        key = request_key(project, {k: v for k, v in body.items() if k not in ("stream", "stream_options")})
         hit = self.cache.get(key)
         if hit:
             out, baseline = hit
@@ -193,7 +269,7 @@ class Gateway:
             out["leanroute"] = {"route": "cached", "reason": "identical request answered from cache",
                                 "decision_ms": 0.0, "engine": "cache", "model": out.get("model"),
                                 "cost_usd": 0.0, "saved_usd": round(baseline, 6)}
-            return out
+            return {"final": out}
 
         messages = body.get("messages") or []
         text = last_user_text(messages)[:4000]
@@ -219,7 +295,7 @@ class Gateway:
             baseline = cost(self.cfg, "strong", {"prompt_tokens": est})
             self.store.record(project=project, route="blocked", model=None, cost_usd=0.0, baseline_usd=baseline,
                               decision_ms=decision_ms, prompt_tokens=est)
-            return {
+            return {"final": {
                 "id": f"leanroute-blocked-{int(time.time()*1000)}",
                 "object": "chat.completion",
                 "created": int(time.time()),
@@ -228,8 +304,9 @@ class Gateway:
                              "message": {"role": "assistant", "content": "This request was blocked by Leanroute guardrails."}}],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                 "leanroute": meta,
-            }
+            }}
 
+        self._check_limits(project)
         if requested in ("auto", "", None):
             tier = d["route"]
             model = self.cfg.cheap_model if tier == "cheap" else self.cfg.strong_model
@@ -237,31 +314,132 @@ class Gateway:
             tier = "cheap" if requested == self.cfg.cheap_model else "strong"
             model = requested
             meta["route"] = "pinned"
+        return {"model": model, "tier": tier, "meta": meta, "key": key, "decision_ms": decision_ms}
 
-        out = self._call(body, model)
+    def handle(self, body: Dict[str, Any], project: str = "default") -> Dict[str, Any]:
+        plan = self._plan(body, project)
+        if "final" in plan:
+            return plan["final"]
+        meta = plan["meta"]
+        out, model, tier = self._call_with_fallback(body, plan)
         usage = out.get("usage") or {}
         actual = cost(self.cfg, tier, usage)
         baseline = cost(self.cfg, "strong", usage)
         self.store.record(project=project, route=meta["route"], model=model, cost_usd=actual, baseline_usd=baseline,
-                          decision_ms=decision_ms, prompt_tokens=usage.get("prompt_tokens", 0),
+                          decision_ms=plan["decision_ms"], prompt_tokens=usage.get("prompt_tokens", 0),
                           completion_tokens=usage.get("completion_tokens", 0))
-        self.cache.put(key, out, baseline)
+        self.cache.put(plan["key"], out, baseline)
         if meta["route"] == "cheap" and self.cfg.quality_rate > 0 and random.random() < self.cfg.quality_rate:
             self._submit(self._quality_check, body, answer_text(out), project)
         meta.update({"model": model, "cost_usd": round(actual, 6), "saved_usd": round(baseline - actual, 6)})
         out["leanroute"] = meta
         return out
 
-    def _call(self, body: Dict[str, Any], model: str) -> Dict[str, Any]:
-        upstream_body = {k: v for k, v in body.items() if k != "stream"}
-        upstream_body["model"] = model
+    def handle_stream(self, body: Dict[str, Any], project: str = "default") -> Tuple[Dict[str, str], Iterator[str]]:
+        """Streaming version: returns (response headers, server-sent-event lines). Retries and the fallback to
+        the strong model happen before the first byte; the cost is recorded when the stream ends."""
+        plan = self._plan(body, project)
+        if "final" in plan:
+            return route_headers(plan["final"]["leanroute"]), sse_from_response(plan["final"])
+        meta = plan["meta"]
+        want_usage = bool((body.get("stream_options") or {}).get("include_usage"))
+        upstream = dict(body, stream=True, stream_options={**(body.get("stream_options") or {}), "include_usage": True})
+        r, model, tier = self._call_with_fallback(upstream, plan, stream=True)
+        meta["model"] = model
+        messages = body.get("messages") or []
+
+        def events() -> Iterator[str]:
+            parts: List[str] = []
+            usage: Dict[str, Any] = {}
+            try:
+                for line in r.iter_lines():
+                    if line.startswith("data: ") and line.strip() != "data: [DONE]":
+                        try:
+                            chunk = json.loads(line[6:])
+                        except ValueError:
+                            chunk = None
+                        if chunk is not None:
+                            usage = chunk.get("usage") or usage
+                            for choice in chunk.get("choices") or []:
+                                parts.append((choice.get("delta") or {}).get("content") or "")
+                            if not want_usage and not chunk.get("choices") and chunk.get("usage"):
+                                continue  # we asked for usage ourselves; don't surprise clients that didn't
+                    yield line + "\n"
+            finally:
+                r.close()
+                text = "".join(parts)
+                if not usage:  # provider didn't report usage: estimate it
+                    usage = {"prompt_tokens": estimate_prompt_tokens(messages), "completion_tokens": max(1, len(text) // 4)}
+                actual, baseline = cost(self.cfg, tier, usage), cost(self.cfg, "strong", usage)
+                self.store.record(project=project, route=meta["route"], model=model, cost_usd=actual,
+                                  baseline_usd=baseline, decision_ms=plan["decision_ms"],
+                                  prompt_tokens=usage.get("prompt_tokens", 0),
+                                  completion_tokens=usage.get("completion_tokens", 0))
+                if meta["route"] == "cheap" and self.cfg.quality_rate > 0 and random.random() < self.cfg.quality_rate:
+                    self._submit(self._quality_check, {k: v for k, v in body.items() if k not in ("stream", "stream_options")},
+                                 text, project)
+
+        return route_headers(meta), events()
+
+    def _check_limits(self, project: str):
+        """Per-project requests-per-minute and monthly budget, checked before any money is spent."""
+        if self.cfg.project_rpm > 0 and not self._project_limiter.allow(project, self.cfg.project_rpm):
+            raise LimitExceeded(f"Rate limit reached for project '{project}' ({self.cfg.project_rpm} requests per minute).")
+        budget = self.cfg.budget_for(project)
+        if budget is not None:
+            spent = self.month_spend(project)
+            if spent >= budget:
+                raise LimitExceeded(f"Monthly budget of ${budget:g} reached for project '{project}' (spent ${spent:.2f}).")
+
+    def month_spend(self, project: str) -> float:
+        start = time.gmtime()
+        month_start = calendar.timegm((start.tm_year, start.tm_mon, 1, 0, 0, 0))
+        return (self.store.snapshot(project=project, since=month_start)["actual_cost_usd"]
+                + self.store.quality(project=project, since=month_start)["cost_usd"])
+
+    def _call_with_fallback(self, body: Dict[str, Any], plan: Dict[str, Any], stream: bool = False):
+        """Call the chosen model (with retries). If the cheap model still fails, use the strong model instead."""
+        model, tier, meta = plan["model"], plan["tier"], plan["meta"]
+        try:
+            return self._send(body, model, stream), model, tier
+        except (httpx.HTTPStatusError, httpx.TransportError) as e:
+            status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+            if meta["route"] != "cheap" or status in (400, 401, 403, 422):
+                raise  # a pinned or strong-model failure, or a request the strong model would reject too
+            log.warning("cheap model failed (%s); falling back to the strong model", status or type(e).__name__)
+            meta["route"], meta["reason"] = "strong", meta["reason"] + f"; fallback: cheap model failed ({status or 'network'})"
+            return self._send(body, self.cfg.strong_model, stream), self.cfg.strong_model, "strong"
+
+    def _send(self, body: Dict[str, Any], model: str, stream: bool = False):
+        """POST to the provider, retrying overload (429), server errors (5xx) and network failures."""
+        payload = {k: v for k, v in body.items() if stream or k not in ("stream", "stream_options")}
+        payload["model"] = model
         headers = {"Content-Type": "application/json"}
         if self.cfg.upstream_api_key:
             headers["Authorization"] = f"Bearer {self.cfg.upstream_api_key}"
-        r = self.client.post(f"{self.cfg.upstream_base_url.rstrip('/')}/chat/completions",
-                             json=upstream_body, headers=headers)
-        r.raise_for_status()
-        return r.json()
+        url = f"{self.cfg.upstream_base_url.rstrip('/')}/chat/completions"
+        for attempt in range(self.cfg.retries + 1):
+            last = attempt == self.cfg.retries
+            try:
+                r = self.client.send(self.client.build_request("POST", url, json=payload, headers=headers), stream=stream)
+            except httpx.TransportError:
+                if last:
+                    raise
+                time.sleep(self.cfg.retry_backoff * 2 ** attempt)
+                continue
+            if r.status_code < 400:
+                return r if stream else r.json()
+            if stream:
+                r.read()
+                r.close()
+            if last or r.status_code not in (429, 500, 502, 503, 504):
+                r.raise_for_status()
+            wait = r.headers.get("retry-after")
+            time.sleep(min(float(wait), 10.0) if wait and wait.replace(".", "", 1).isdigit() else self.cfg.retry_backoff * 2 ** attempt)
+        raise RuntimeError("unreachable")
+
+    def _call(self, body: Dict[str, Any], model: str) -> Dict[str, Any]:
+        return self._send(body, model)
 
     def _quality_check(self, body: Dict[str, Any], cheap_answer: str, project: str):
         """Ask the strong model the same question, then have it judge whether the cheap answer was as good.
