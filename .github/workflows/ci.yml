@@ -10,7 +10,7 @@ jobs:
       - name: Install (no model download; tests use stand-in engines)
         run: |
           pip install fastapi "uvicorn[standard]" httpx pydantic pytest
-          pip install -e ./sdk
+          pip install -e "./sdk[mcp]"
       - name: Server tests
         run: cd server && PRELOAD=false pytest -q
       - name: SDK tests

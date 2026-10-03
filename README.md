@@ -194,7 +194,8 @@ Alternative for demos: run on your Mac and expose it with a free Cloudflare Tunn
 - [ ] Fine-tune Studio: upload CSV → custom calibrated model
 - [x] Savings dashboard page
 - [ ] Dashboard for SDK users (SDK reports usage to a server)
-- [ ] LangChain / CrewAI / MCP plug-ins
+- [x] MCP server (`leanroute mcp`)
+- [ ] LangChain / CrewAI plug-ins
 
 ## License
 

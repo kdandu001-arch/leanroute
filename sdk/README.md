@@ -109,6 +109,30 @@ leanroute stats            # the same totals as JSON, for scripts
 
 It's the same dashboard as the Leanroute server's: money saved, routing split, attacks blocked, a per-day chart. Dollar amounts need `prices=`; without them you still see requests, routes and blocks. Options: `--port`, `--db`, `--no-browser`. Group apps with `Leanroute(project="shop")`; turn saving off with `Leanroute(record_usage=False)` or `LEANROUTE_RECORD=0`, or move the file with `LEANROUTE_DB`.
 
+## MCP server: `leanroute mcp`
+
+Run Leanroute as a [Model Context Protocol](https://modelcontextprotocol.io) server so any MCP client (Claude Desktop, Claude Code, Cursor, ...) can call it as a tool:
+
+```bash
+pip install "leanroute[mcp,local]"
+leanroute mcp                      # stdio; set LEANROUTE_API_URL to use a Leanroute server instead
+```
+
+Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{ "mcpServers": { "leanroute": { "command": "leanroute", "args": ["mcp"] } } }
+```
+
+| Tool | What it returns |
+|---|---|
+| `route_prompt(prompt, cheap_model, strong_model)` | route (cheap / strong / blocked), chosen model, reason, scores |
+| `guard_prompt(prompt)` | whether the text is a jailbreak or prompt injection, with detector scores |
+| `ask(text, question)` | probability of yes for any yes/no question |
+| `usage_stats(days)` | requests per route, cost and savings from the local usage log |
+
+The model loads on the first tool call, not at startup. Prompts are never stored.
+
 ## Tuning
 
 ```python

@@ -1,4 +1,4 @@
-"""Command line: `leanroute dashboard`, `leanroute stats`."""
+"""Command line: `leanroute dashboard`, `leanroute stats`, `leanroute mcp`."""
 from __future__ import annotations
 
 import argparse
@@ -22,6 +22,9 @@ def main(argv=None):
     s.add_argument("--days", type=int, default=30)
     s.add_argument("--db")
 
+    m = sub.add_parser("mcp", help="run Leanroute as an MCP server (needs: pip install \"leanroute[mcp]\")")
+    m.add_argument("--transport", choices=["stdio", "sse", "streamable-http"], default="stdio")
+
     args = ap.parse_args(argv)
     if args.cmd == "dashboard":
         from .dashboard import serve
@@ -30,6 +33,9 @@ def main(argv=None):
         from .usage import LocalUsage
         report = LocalUsage(args.db).usage_report(days=args.days)
         print(json.dumps({"days": report["days"], **report["totals"]}, indent=2))
+    elif args.cmd == "mcp":
+        from .mcp_server import serve
+        serve(args.transport)
     else:
         ap.print_help()
         return 1

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+**Python package (`pip install leanroute`)**
+- `leanroute mcp`: Leanroute as an MCP (Model Context Protocol) server with four tools: `route_prompt`, `guard_prompt`, `ask` and `usage_stats`. Install with `pip install "leanroute[mcp]"`; works with Claude Desktop, Claude Code, Cursor and other MCP clients.
+
 ## 0.3.0 (2026-09-29)
 
 **Python package (`pip install leanroute`)**
